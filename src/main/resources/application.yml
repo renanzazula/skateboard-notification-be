@@ -83,7 +83,8 @@ push:
     access-token: ${EXPO_PUSH_ACCESS_TOKEN:}
     connect-timeout-ms: ${EXPO_PUSH_CONNECT_TIMEOUT_MS:3000}
     read-timeout-ms: ${EXPO_PUSH_READ_TIMEOUT_MS:10000}
-    # Expo's documented maximum messages per /push/send request.
+    # Expo's documented maximum per /push/send request; clamped to 1..100
+    # by ExpoPushNotificationProvider, since 0 would spin the send loop.
     batch-size: ${EXPO_PUSH_BATCH_SIZE:100}
 
   retry:

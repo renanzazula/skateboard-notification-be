@@ -8,8 +8,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-
 @Service
 public class RegisterDeviceService implements RegisterDeviceUseCase {
 
@@ -24,8 +22,6 @@ public class RegisterDeviceService implements RegisterDeviceUseCase {
     @Override
     @Transactional
     public NotificationDevice execute(Input input) {
-        releaseTokenFromOtherUsers(input);
-
         NotificationDevice device = deviceRepositoryPort
                 .findByUserAndIdentifier(input.userId(), input.deviceIdentifier())
                 .map(existing -> {
@@ -37,26 +33,33 @@ public class RegisterDeviceService implements RegisterDeviceUseCase {
                         input.deviceIdentifier(), input.platform(), input.provider(), input.pushToken(),
                         input.appVersion(), input.deviceName()));
 
-        return deviceRepositoryPort.save(device);
+        NotificationDevice saved = deviceRepositoryPort.save(device);
+        releaseTokenFromOtherRegistrations(input, saved);
+        return saved;
     }
 
     /**
-     * A push token identifies a handset, not an account. If user B signs in on
-     * a phone user A was signed into, both registrations would otherwise stay
-     * live and user A's notifications would keep landing on a phone they no
-     * longer hold (spec §29). The client is expected to de-register on logout;
-     * this covers the case where it could not — an involuntary sign-out, a
-     * crash, an uninstall/reinstall.
+     * A push token addresses a handset, not an account, so exactly one
+     * registration may own it — and the registration that just claimed it wins.
+     *
+     * <p>Two situations produce a rival. Somebody else signs in on a shared
+     * device, and their notifications would otherwise keep arriving for the
+     * previous account (spec §29); the client is expected to de-register on
+     * logout, but cannot when the sign-out was involuntary, or the app crashed,
+     * or it was reinstalled. And the *same* person reinstalls, getting a fresh
+     * device identifier for the same token — two live rows, and every
+     * notification delivered to that handset twice.
+     *
+     * <p>Done after the save so the surviving row can be excluded by id, and as
+     * a targeted update so a concurrent registration of one of those other
+     * rows is not overwritten by a stale snapshot.
      */
-    private void releaseTokenFromOtherUsers(Input input) {
-        List<NotificationDevice> strays =
-                deviceRepositoryPort.findOtherUsersWithPushToken(input.pushToken(), input.userId());
-        if (strays.isEmpty()) {
-            return;
+    private void releaseTokenFromOtherRegistrations(Input input, NotificationDevice saved) {
+        int released = deviceRepositoryPort
+                .disableOtherRegistrationsForToken(input.pushToken(), saved.getId());
+        if (released > 0) {
+            log.info("Disabled {} stale registration(s) of the push token now claimed by device {}",
+                    released, saved.getId());
         }
-        strays.forEach(NotificationDevice::disable);
-        deviceRepositoryPort.saveAll(strays);
-        log.info("Disabled {} stale device registration(s) holding the push token now claimed by user {}",
-                strays.size(), input.userId());
     }
 }

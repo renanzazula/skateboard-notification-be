@@ -138,6 +138,70 @@ class ExpoPushNotificationProviderTest {
                 .isEqualTo(PushResult.Outcome.RETRYABLE);
     }
 
+    /**
+     * A 200 carrying something that is not JSON — a proxy error page, an HTML
+     * maintenance notice — throws a CodecException, which is neither of
+     * WebClient's own exception types. Unhandled it would escape send()
+     * entirely and abandon every remaining batch.
+     */
+    @Test
+    void anUnreadableBodyOnA200IsRetryableRatherThanEscapingTheSend() {
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "text/html")
+                .setBody("<html><body>502 Bad Gateway</body></html>"));
+
+        assertThat(provider.send(List.of(message("ExponentPushToken[a]"))))
+                .singleElement()
+                .extracting(PushResult::outcome)
+                .isEqualTo(PushResult.Outcome.RETRYABLE);
+    }
+
+    /** A later batch must still go out after an earlier one came back unreadable. */
+    @Test
+    void keepsSendingLaterBatchesAfterAnUnreadableResponse() {
+        provider = new ExpoPushNotificationProvider(WebClient.builder(),
+                new ExpoProperties(baseUrl(), null, 2000, 5000, 1));
+        server.enqueue(new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "text/html").setBody("<html>nope</html>"));
+        enqueue(200, "{\"data\":[{\"status\":\"ok\",\"id\":\"receipt-2\"}]}");
+
+        List<PushResult> results =
+                provider.send(List.of(message("ExponentPushToken[a]"), message("ExponentPushToken[b]")));
+
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0).outcome()).isEqualTo(PushResult.Outcome.RETRYABLE);
+        assertThat(results.get(1).outcome()).isEqualTo(PushResult.Outcome.ACCEPTED);
+    }
+
+    /**
+     * Zero would make the send loop never advance — the listener thread spins
+     * forever and the message is never acked.
+     */
+    @Test
+    void aBatchSizeOfZeroIsCorrectedRatherThanHangingTheSendLoop() {
+        provider = new ExpoPushNotificationProvider(WebClient.builder(),
+                new ExpoProperties(baseUrl(), null, 2000, 5000, 0));
+        enqueue(200, "{\"data\":[{\"status\":\"ok\",\"id\":\"receipt-1\"}]}");
+
+        assertThat(provider.send(List.of(message("ExponentPushToken[a]"))))
+                .singleElement()
+                .extracting(PushResult::outcome)
+                .isEqualTo(PushResult.Outcome.ACCEPTED);
+    }
+
+    @Test
+    void aBatchSizeAboveExposMaximumIsCappedSoTheRequestIsNotRejected() {
+        provider = new ExpoPushNotificationProvider(WebClient.builder(),
+                new ExpoProperties(baseUrl(), null, 2000, 5000, 5000));
+        enqueue(200, "{\"data\":[{\"status\":\"ok\",\"id\":\"receipt-1\"}]}");
+
+        assertThat(provider.send(List.of(message("ExponentPushToken[a]"))))
+                .singleElement()
+                .extracting(PushResult::outcome)
+                .isEqualTo(PushResult.Outcome.ACCEPTED);
+    }
+
     @Test
     void splitsMessagesIntoBatchesOfTheConfiguredSize() throws Exception {
         provider = new ExpoPushNotificationProvider(WebClient.builder(),
@@ -164,6 +228,10 @@ class ExpoPushNotificationProviderTest {
         String body = request.getBody().readUtf8();
         assertThat(body).contains("\"to\":\"ExponentPushToken[a]\"")
                 .contains("\"targetType\":\"PODCAST\"");
+    }
+
+    private String baseUrl() {
+        return server.url("/").toString().replaceAll("/$", "");
     }
 
     private void enqueue(int status, String body) {

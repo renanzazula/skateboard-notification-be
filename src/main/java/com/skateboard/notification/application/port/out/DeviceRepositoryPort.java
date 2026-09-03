@@ -14,11 +14,21 @@ public interface DeviceRepositoryPort {
     Optional<NotificationDevice> findById(UUID id);
 
     /**
-     * Every other registration of the same handset — used to disable the
-     * previous account's registration when someone else signs in on a shared
-     * device (spec §29).
+     * Disables every registration holding this push token except the one being
+     * kept, and answers how many were closed.
+     *
+     * <p>A push token addresses a handset, so exactly one registration may own
+     * it. Two cases produce a second one: somebody else signs in on a shared
+     * device (spec §29), and the same person reinstalls under a new device
+     * identifier — which, left alone, would deliver every notification to that
+     * handset twice.
+     *
+     * <p>Expressed as a targeted update rather than load-mutate-save because
+     * the rows being closed are not the caller's to rewrite: another request
+     * may be updating them concurrently, and writing back a whole aggregate
+     * would undo it.
      */
-    List<NotificationDevice> findOtherUsersWithPushToken(String pushToken, UUID excludedUserId);
+    int disableOtherRegistrationsForToken(String pushToken, UUID keepDeviceId);
 
     /**
      * The fan-out query: every device that should receive a notification of
@@ -43,6 +53,4 @@ public interface DeviceRepositoryPort {
      * is changed on its own.
      */
     void disableById(UUID id);
-
-    List<NotificationDevice> saveAll(List<NotificationDevice> devices);
 }

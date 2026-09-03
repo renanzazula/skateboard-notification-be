@@ -33,10 +33,9 @@ public class DevicePersistenceAdapter implements DeviceRepositoryPort {
     }
 
     @Override
-    public List<NotificationDevice> findOtherUsersWithPushToken(String pushToken, UUID excludedUserId) {
-        return repository.findByPushTokenAndUserIdNot(pushToken, excludedUserId).stream()
-                .map(this::toDomain)
-                .toList();
+    @Transactional
+    public int disableOtherRegistrationsForToken(String pushToken, UUID keepDeviceId) {
+        return repository.disableOtherRegistrationsForToken(pushToken, keepDeviceId, Instant.now());
     }
 
     @Override
@@ -56,13 +55,6 @@ public class DevicePersistenceAdapter implements DeviceRepositoryPort {
     @Transactional
     public void disableById(UUID id) {
         repository.disableById(id, Instant.now());
-    }
-
-    @Override
-    @Transactional
-    public List<NotificationDevice> saveAll(List<NotificationDevice> devices) {
-        List<NotificationDeviceJpaEntity> entities = devices.stream().map(this::toEntity).toList();
-        return repository.saveAll(entities).stream().map(this::toDomain).toList();
     }
 
     private NotificationDevice toDomain(NotificationDeviceJpaEntity entity) {

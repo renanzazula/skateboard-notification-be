@@ -91,7 +91,6 @@ class DispatchNotificationServiceTest {
         assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.INVALID_TOKEN);
         verify(deviceRepositoryPort).disableById(device.getId());
         verify(deviceRepositoryPort, never()).save(any());
-        verify(deviceRepositoryPort, never()).saveAll(any());
     }
 
     @Test

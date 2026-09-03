@@ -9,6 +9,7 @@ import com.skateboard.notification.infrastructure.security.CurrentUserProvider;
 import com.skateboard.notification.infrastructure.security.SecurityConfig;
 import com.skateboard.notification.infrastructure.web.GlobalExceptionHandler;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
@@ -22,7 +23,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -100,6 +103,30 @@ class NotificationDeviceControllerSecurityTest {
                                 .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE"))
                         .contentType("application/json").content(BODY))
                 .andExpect(status().isOk());
+    }
+
+    /**
+     * provider is optional in the spec, so this is a real path rather than an
+     * unreachable default: a build that predates the field registers fine
+     * instead of getting a 400.
+     */
+    @Test
+    void acceptsARegistrationThatOmitsTheProvider() throws Exception {
+        given(registerDeviceUseCase.execute(any())).willReturn(NotificationDevice.register(
+                UUID.randomUUID(), UUID.fromString("00000000-0000-0000-0000-000000000001"), "install-1",
+                DevicePlatform.IOS, PushProvider.EXPO, "ExponentPushToken[abc]", "1.5.0", "iPhone"));
+
+        mockMvc.perform(put("/devices/install-1")
+                        .with(jwt().jwt(builder -> builder.subject(UUID.randomUUID().toString()))
+                                .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE"))
+                        .contentType("application/json")
+                        .content("{\"platform\":\"IOS\",\"pushToken\":\"ExponentPushToken[abc]\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<RegisterDeviceUseCase.Input> captor =
+                ArgumentCaptor.forClass(RegisterDeviceUseCase.Input.class);
+        verify(registerDeviceUseCase).execute(captor.capture());
+        assertThat(captor.getValue().provider()).isEqualTo(PushProvider.EXPO);
     }
 
     @Test

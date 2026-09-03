@@ -72,11 +72,20 @@ infrastructure/         → messaging (topology), push (config), security, web
   `notifications` object, same `FUNC_USER_SELF_READ`/`FUNC_USER_SELF_UPDATE`. `skateboard-ui-backend`
   re-points one route at this service and the mobile settings screen is untouched. Do not reshape it
   without changing the BFF, `bff-openapi.yaml` and the app together.
-- **Registering a push token another user holds disables their registration.** A token identifies a
-  handset, not an account; without this a shared phone keeps receiving the previous account's
-  notifications whenever the client could not de-register (involuntary sign-out, crash, reinstall).
-- **`tenant_id` is on every table and in every recipient query**, though exactly one tenant exists. The
-  isolation is cheap to guarantee now and expensive to retrofit.
+- **Registering a push token closes every other registration holding it.** A token identifies a
+  handset, not an account, so exactly one registration may own it. Two cases produce a rival: someone
+  else signs in on a shared phone and the previous account's notifications keep arriving, and the
+  *same* person reinstalls under a new device identifier, which without this delivers every
+  notification to that handset twice. Done as a targeted update after the save — never
+  load-mutate-save, which would overwrite a registration another request is updating concurrently.
+  The same reasoning applies to disabling a device on a dead token: `disableById`, not a write-back
+  of the pre-send snapshot.
+- **`tenant_id` is on every table, and the recipient query joins on it**, though exactly one tenant
+  exists. The isolation is cheap to guarantee now and expensive to retrofit. The preference tables
+  still key on `user_id` alone, deliberately: it is the Keycloak subject, unique across the realm
+  rather than per tenant, so a user has exactly one preference row. They carry `tenant_id` so the
+  fan-out can join on it and stay consistent with the device rows it filters — without that predicate,
+  re-keying either table per tenant would let one tenant's opt-out suppress another's notification.
 - **The idempotency claim commits with the work, not before it.** `NotificationRecorder` owns one
   transaction covering the claim, the notification, its recipients and a PENDING delivery per device;
   `ProcessedEventPersistenceAdapter` joins it rather than opening its own. Claiming separately was a
@@ -99,7 +108,10 @@ infrastructure/         → messaging (topology), push (config), security, web
 - **The Expo failure taxonomy.** `DeviceNotRegistered` disables the device; rate limiting, 5xx and
   transport failures stay retryable; anything else is a permanent rejection. A batch that never reached
   Expo is owed in full — never assumed sent. Expo answers `200` with a per-message ticket array, so an
-  HTTP success can still contain dead tokens.
+  HTTP success can still contain dead tokens. A 2xx whose body will not decode is **retryable, not
+  rejected**: Spring surfaces that as a response exception carrying the original status, so the naive
+  reading treats a proxy error page as a permanent failure and drops the batch. `batch-size` is clamped
+  to 1..100 — zero would make the send loop never advance and hang the listener thread.
 - **`@ImportAutoConfiguration(AopAutoConfiguration.class)` in the controller security tests.** The
   controllers implement generated interfaces and `@PreAuthorize` proxies them; a `@WebMvcTest` slice
   omits that autoconfiguration, so the proxy becomes a JDK dynamic one that carries no

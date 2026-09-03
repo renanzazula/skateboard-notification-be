@@ -199,7 +199,11 @@ components:
 
     RegisterDeviceRequest:
       type: object
-      required: [platform, provider, pushToken]
+      # provider is optional on purpose. Which push service delivers the token
+      # is this platform's decision, not something a client should have to
+      # restate on every call, and requiring it would 400 any build that
+      # predates it being added. Absent means EXPO.
+      required: [platform, pushToken]
       properties:
         platform:
           type: string
@@ -208,6 +212,7 @@ components:
           type: string
           enum: [EXPO]
           default: EXPO
+          nullable: true
         pushToken:
           type: string
           maxLength: 500

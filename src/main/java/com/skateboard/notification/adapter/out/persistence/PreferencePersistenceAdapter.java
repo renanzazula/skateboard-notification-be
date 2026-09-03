@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -19,6 +20,14 @@ import java.util.UUID;
  * <p>Rows are created lazily on write, never on read: absence already means
  * enabled, so a read that materialised defaults would fill the table with rows
  * that carry no information.
+ *
+ * <p>Both tables key on {@code user_id} alone, deliberately. The id is the
+ * Keycloak subject, which is unique across the whole realm rather than per
+ * tenant, so a user has exactly one preference row and adding tenant to the key
+ * would only invent a second one that nothing could reach. {@code tenant_id} is
+ * still carried and still refreshed on write — the JWT is authoritative for
+ * which tenant the caller belongs to — so that the recipient query can join on
+ * it and stay consistent with the device rows it filters.
  */
 @Component
 public class PreferencePersistenceAdapter implements PreferenceRepositoryPort {
@@ -36,14 +45,11 @@ public class PreferencePersistenceAdapter implements PreferenceRepositoryPort {
 
     @Override
     public NotificationPreferences load(UUID userId, UUID tenantId) {
-        boolean pushEnabled = channelSettingRepository.findById(userId)
-                .map(NotificationChannelSettingJpaEntity::isPushEnabled)
-                .orElse(true);
+        Optional<NotificationChannelSettingJpaEntity> setting = channelSettingRepository.findById(userId);
+        boolean pushEnabled = setting.map(NotificationChannelSettingJpaEntity::isPushEnabled).orElse(true);
+        Instant updatedAt = setting.map(NotificationChannelSettingJpaEntity::getUpdatedAt).orElse(null);
 
         Map<NotificationType, Boolean> byType = new EnumMap<>(NotificationType.class);
-        Instant updatedAt = channelSettingRepository.findById(userId)
-                .map(NotificationChannelSettingJpaEntity::getUpdatedAt)
-                .orElse(null);
 
         for (NotificationPreferenceJpaEntity entity : preferenceRepository.findByUserId(userId)) {
             NotificationType type = parseType(entity.getNotificationType());

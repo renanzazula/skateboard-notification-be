@@ -65,7 +65,12 @@ public class NotificationDeviceController implements DevicesApi {
         return ResponseEntity.noContent().build();
     }
 
-    /** The spec defaults provider to EXPO; older clients may omit it entirely. */
+    /**
+     * The spec makes provider optional with a default of EXPO, so this is a
+     * real path rather than dead code: a client that predates the field, or one
+     * that simply does not care which push service carries its token, sends
+     * nothing and still registers.
+     */
     private PushProvider resolveProvider(RegisterDeviceRequest request) {
         return request.getProvider() == null
                 ? PushProvider.EXPO

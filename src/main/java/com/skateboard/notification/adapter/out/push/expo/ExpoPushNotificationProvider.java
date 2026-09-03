@@ -44,6 +44,9 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
 
     private static final String SEND_PATH = "/--/api/v2/push/send";
 
+    /** Expo's documented maximum messages per /push/send request. */
+    private static final int MAX_BATCH_SIZE = 100;
+
     /** Expo's code for a token that will never work again. */
     private static final String ERROR_DEVICE_NOT_REGISTERED = "DeviceNotRegistered";
     /** Back off and try later; the token itself is fine. */
@@ -67,7 +70,23 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
         }
 
         this.webClient = builder.build();
-        this.batchSize = properties.batchSize();
+        this.batchSize = clampBatchSize(properties.batchSize());
+    }
+
+    /**
+     * A batch size of zero would make the send loop never advance — the
+     * listener thread spins forever and the message is never acked — and
+     * anything above Expo's documented maximum is rejected outright, which
+     * this class would then record as a permanent failure for every message in
+     * it. Neither is worth taking the service down for, so a bad value is
+     * corrected and reported rather than fatal.
+     */
+    private int clampBatchSize(int configured) {
+        int clamped = Math.max(1, Math.min(configured, MAX_BATCH_SIZE));
+        if (clamped != configured) {
+            log.warn("push.expo.batch-size {} is out of range; using {}", configured, clamped);
+        }
+        return clamped;
     }
 
     @Override
@@ -96,6 +115,19 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
                     .block();
             return interpret(batch, response);
         } catch (WebClientResponseException e) {
+            // A 2xx that lands here could not be decoded — a proxy error page,
+            // an HTML maintenance notice, a truncated body. Spring wraps that
+            // failure as a response exception carrying the original status, so
+            // without this arm a successful-looking response with an
+            // unreadable body would be classified as a permanent rejection and
+            // the batch dropped. We do not know what Expo did with it, and
+            // "unknown" has to mean retryable.
+            if (e.getStatusCode().is2xxSuccessful()) {
+                log.warn("Unreadable {} response from Expo; treating the batch as unsent",
+                        e.getStatusCode().value(), e);
+                return uniform(batch.size(),
+                        PushResult.retryable("Unreadable Expo response: " + e.getStatusCode().value()));
+            }
             // 429 and 5xx are Expo's problem and will likely clear; a 4xx we
             // caused will not, but the delivery row records the reason either
             // way and a bounded retry is cheap next to a lost notification.
@@ -107,6 +139,13 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
             // Never reached Expo — a timeout or a connection failure. Nothing
             // was sent, so every message in the batch is still owed.
             return uniform(batch.size(), PushResult.retryable("Expo unreachable: " + e.getMessage()));
+        } catch (RuntimeException e) {
+            // Backstop. A raw CodecException or any other unexpected throw must
+            // not escape send() and abandon the batches after this one — that
+            // would contradict the promise that a batch which never reached
+            // Expo is owed in full.
+            log.warn("Unexpected failure talking to Expo; treating the batch as unsent", e);
+            return uniform(batch.size(), PushResult.retryable("Expo call failed: " + e.getMessage()));
         }
     }
 

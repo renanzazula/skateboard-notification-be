@@ -7,30 +7,28 @@ import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.PushProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * Registration is the one write path a client drives directly, so what it does
- * with an already-known device and with a token another account still holds is
- * worth pinning down.
+ * with an already-known device and with a token some other registration still
+ * holds is worth pinning down.
  */
 class RegisterDeviceServiceTest {
 
     private static final UUID USER = UUID.fromString("11111111-1111-1111-1111-111111111111");
-    private static final UUID OTHER_USER = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID TENANT = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final String TOKEN = "ExponentPushToken[abc]";
 
@@ -42,8 +40,8 @@ class RegisterDeviceServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new RegisterDeviceService(deviceRepositoryPort);
-        when(deviceRepositoryPort.findOtherUsersWithPushToken(anyString(), any())).thenReturn(List.of());
         when(deviceRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(deviceRepositoryPort.disableOtherRegistrationsForToken(anyString(), any())).thenReturn(0);
     }
 
     @Test
@@ -82,32 +80,34 @@ class RegisterDeviceServiceTest {
         assertThat(service.execute(input(TOKEN, "1.5.0")).isEnabled()).isTrue();
     }
 
+    /**
+     * A push token addresses a handset, so only one registration may own it —
+     * whoever else holds it loses it, whether that is another account on a
+     * shared phone or this same user's stale row from before a reinstall.
+     */
     @Test
-    void claimingAPushTokenAnotherUserHoldsDisablesTheirRegistration() {
-        NotificationDevice strayDevice = NotificationDevice.register(OTHER_USER, TENANT, "install-1",
-                DevicePlatform.IOS, PushProvider.EXPO, TOKEN, "1.5.0", "iPhone");
-        when(deviceRepositoryPort.findOtherUsersWithPushToken(TOKEN, USER)).thenReturn(List.of(strayDevice));
+    void closesEveryOtherRegistrationHoldingTheSameToken() {
         when(deviceRepositoryPort.findByUserAndIdentifier(USER, "install-1")).thenReturn(Optional.empty());
+        when(deviceRepositoryPort.disableOtherRegistrationsForToken(anyString(), any())).thenReturn(2);
 
-        service.execute(input(TOKEN, "1.5.0"));
+        NotificationDevice saved = service.execute(input(TOKEN, "1.5.0"));
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<NotificationDevice>> captor = ArgumentCaptor.forClass(List.class);
-        verify(deviceRepositoryPort).saveAll(captor.capture());
-        assertThat(captor.getValue()).singleElement()
-                .satisfies(disabled -> {
-                    assertThat(disabled.getUserId()).isEqualTo(OTHER_USER);
-                    assertThat(disabled.isEnabled()).isFalse();
-                });
+        verify(deviceRepositoryPort).disableOtherRegistrationsForToken(TOKEN, saved.getId());
     }
 
+    /**
+     * The surviving row is excluded by id, so it has to exist first — closing
+     * rivals before the save would either close nothing or close this one.
+     */
     @Test
-    void doesNotTouchOtherRegistrationsWhenTheTokenIsUnclaimed() {
+    void savesTheRegistrationBeforeClosingTheRivalsItMustBeExcludedFrom() {
         when(deviceRepositoryPort.findByUserAndIdentifier(USER, "install-1")).thenReturn(Optional.empty());
 
         service.execute(input(TOKEN, "1.5.0"));
 
-        verify(deviceRepositoryPort, never()).saveAll(any());
+        InOrder inOrder = Mockito.inOrder(deviceRepositoryPort);
+        inOrder.verify(deviceRepositoryPort).save(any());
+        inOrder.verify(deviceRepositoryPort).disableOtherRegistrationsForToken(anyString(), any());
     }
 
     private RegisterDeviceUseCase.Input input(String pushToken, String appVersion) {
