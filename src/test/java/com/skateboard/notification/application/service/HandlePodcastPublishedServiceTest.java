@@ -1,10 +1,7 @@
 package com.skateboard.notification.application.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skateboard.notification.application.port.in.DispatchNotificationUseCase;
 import com.skateboard.notification.application.port.in.HandlePodcastPublishedUseCase;
-import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
-import com.skateboard.notification.application.port.out.ProcessedEventPort;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationType;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,11 +11,13 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -28,34 +27,30 @@ class HandlePodcastPublishedServiceTest {
     private static final UUID EVENT = UUID.fromString("4470ac44-224e-4115-a41e-bc554e91bf3d");
     private static final UUID TENANT = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
-    @Mock private ProcessedEventPort processedEventPort;
-    @Mock private NotificationRepositoryPort notificationRepositoryPort;
-    @Mock private DispatchNotificationUseCase dispatchNotificationUseCase;
+    @Mock private NotificationRecorder notificationRecorder;
+    @Mock private DispatchNotificationService dispatchNotificationService;
 
     private HandlePodcastPublishedService service;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        service = new HandlePodcastPublishedService(processedEventPort, new NotificationTemplateResolver(),
-                notificationRepositoryPort, dispatchNotificationUseCase, new ObjectMapper());
-        when(notificationRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(dispatchNotificationUseCase.execute(any()))
-                .thenReturn(new DispatchNotificationUseCase.Result(2, 2, 0, 0));
+        service = new HandlePodcastPublishedService(new NotificationTemplateResolver(),
+                notificationRecorder, dispatchNotificationService, new ObjectMapper());
+        when(dispatchNotificationService.send(any()))
+                .thenReturn(new DispatchNotificationService.Result(2, 2, 0, 0, 0));
     }
 
     @Test
     void turnsAPublishedPodcastIntoANotificationCarryingTheEpisodeTitle() {
-        when(processedEventPort.claim(EVENT, "PODCAST_PUBLISHED")).thenReturn(true);
+        recorderAccepts();
 
         HandlePodcastPublishedUseCase.Result result = service.execute(input());
 
         assertThat(result.processed()).isTrue();
         assertThat(result.sent()).isEqualTo(2);
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(notificationRepositoryPort).save(captor.capture());
-        Notification notification = captor.getValue();
+        Notification notification = capturedDraft();
         assertThat(notification.getType()).isEqualTo(NotificationType.NEW_PODCAST);
         assertThat(notification.getTenantId()).isEqualTo(TENANT);
         assertThat(notification.getTitle()).isEqualTo("New podcast available");
@@ -70,13 +65,11 @@ class HandlePodcastPublishedServiceTest {
      */
     @Test
     void storesSemanticNavigationTargetsIncludingTheSlug() {
-        when(processedEventPort.claim(EVENT, "PODCAST_PUBLISHED")).thenReturn(true);
+        recorderAccepts();
 
         service.execute(input());
 
-        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(notificationRepositoryPort).save(captor.capture());
-        assertThat(captor.getValue().getDataJson())
+        assertThat(capturedDraft().getDataJson())
                 .contains("\"targetType\":\"PODCAST\"")
                 .contains("\"targetId\":\"123\"")
                 .contains("\"targetSlug\":\"barcelona-street-sessions-14\"");
@@ -87,25 +80,41 @@ class HandlePodcastPublishedServiceTest {
      * neither may reach a handset twice.
      */
     @Test
-    void aRedeliveredEventWritesNothingAndSendsNothing() {
-        when(processedEventPort.claim(EVENT, "PODCAST_PUBLISHED")).thenReturn(false);
+    void aRedeliveredEventSendsNothing() {
+        when(notificationRecorder.record(any(), anyString(), any())).thenReturn(Optional.empty());
 
         HandlePodcastPublishedUseCase.Result result = service.execute(input());
 
         assertThat(result.processed()).isFalse();
-        verifyNoInteractions(notificationRepositoryPort);
-        verifyNoInteractions(dispatchNotificationUseCase);
+        verifyNoInteractions(dispatchNotificationService);
     }
 
+    /**
+     * Persisting and sending are separate phases so that everything which must
+     * be consistent commits together, before anything leaves the process. The
+     * handler must not reorder them.
+     */
     @Test
-    void claimsTheEventBeforeWritingAnything() {
-        when(processedEventPort.claim(any(), anyString())).thenReturn(true);
+    void recordsEverythingBeforeSendingAnything() {
+        recorderAccepts();
 
         service.execute(input());
 
-        var inOrder = org.mockito.Mockito.inOrder(processedEventPort, notificationRepositoryPort);
-        inOrder.verify(processedEventPort).claim(EVENT, "PODCAST_PUBLISHED");
-        inOrder.verify(notificationRepositoryPort).save(any());
+        var inOrder = org.mockito.Mockito.inOrder(notificationRecorder, dispatchNotificationService);
+        inOrder.verify(notificationRecorder).record(eq(EVENT), eq("PODCAST_PUBLISHED"), any());
+        inOrder.verify(dispatchNotificationService).send(any());
+    }
+
+    private void recorderAccepts() {
+        when(notificationRecorder.record(any(), anyString(), any())).thenAnswer(invocation ->
+                Optional.of(new PreparedDispatch(invocation.getArgument(2), java.util.List.of(),
+                        java.util.List.of())));
+    }
+
+    private Notification capturedDraft() {
+        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
+        verify(notificationRecorder).record(any(), anyString(), captor.capture());
+        return captor.getValue();
     }
 
     private HandlePodcastPublishedUseCase.Input input() {

@@ -85,6 +85,18 @@ push:
     # Expo's documented maximum messages per /push/send request.
     batch-size: ${EXPO_PUSH_BATCH_SIZE:100}
 
+  retry:
+    enabled: ${PUSH_RETRY_ENABLED:true}
+    # Total attempts per delivery. Beyond this the delivery is marked FAILED —
+    # a permanently unreachable device should stop costing a request per pass.
+    max-attempts: ${PUSH_RETRY_MAX_ATTEMPTS:4}
+    # How long after an attempt a delivery becomes eligible again. Also what
+    # keeps a second instance off the same rows once the claim's row lock is
+    # released at commit.
+    backoff-seconds: ${PUSH_RETRY_BACKOFF_SECONDS:120}
+    batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
+    cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%thread] %logger{36} - %msg%n"

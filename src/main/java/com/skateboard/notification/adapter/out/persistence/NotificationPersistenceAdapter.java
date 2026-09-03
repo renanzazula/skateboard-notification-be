@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 @Component
 public class NotificationPersistenceAdapter implements NotificationRepositoryPort {
@@ -25,6 +27,11 @@ public class NotificationPersistenceAdapter implements NotificationRepositoryPor
     @Transactional
     public Notification save(Notification notification) {
         return toDomain(notificationRepository.save(toEntity(notification)));
+    }
+
+    @Override
+    public Optional<Notification> findById(UUID id) {
+        return notificationRepository.findById(id).map(this::toDomain);
     }
 
     @Override

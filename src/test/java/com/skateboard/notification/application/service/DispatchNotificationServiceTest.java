@@ -1,10 +1,8 @@
 package com.skateboard.notification.application.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skateboard.notification.application.port.in.DispatchNotificationUseCase;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
-import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
 import com.skateboard.notification.application.port.out.PushResult;
@@ -15,7 +13,6 @@ import com.skateboard.notification.domain.model.NotificationDelivery;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.NotificationType;
 import com.skateboard.notification.domain.model.PushProvider;
-import com.skateboard.notification.domain.model.UserNotification;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -33,10 +30,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Fan-out, and what each provider outcome does to the delivery row and the
- * device behind it. This is where a wrong answer is expensive: treating a dead
- * token as retryable burns an attempt on every future notification, and
- * treating a timeout as permanent drops one silently.
+ * What each provider outcome does to the delivery row and the device behind it.
+ * A wrong answer here is expensive and quiet: treating a dead token as
+ * retryable burns an attempt on every future notification, and treating a
+ * timeout as permanent drops a notification with nothing to show for it.
  */
 class DispatchNotificationServiceTest {
 
@@ -45,7 +42,6 @@ class DispatchNotificationServiceTest {
     private static final UUID USER_B = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     @Mock private DeviceRepositoryPort deviceRepositoryPort;
-    @Mock private NotificationRepositoryPort notificationRepositoryPort;
     @Mock private DeliveryRepositoryPort deliveryRepositoryPort;
     @Mock private PushNotificationProviderPort pushNotificationProviderPort;
 
@@ -54,102 +50,88 @@ class DispatchNotificationServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        service = new DispatchNotificationService(deviceRepositoryPort, notificationRepositoryPort,
-                deliveryRepositoryPort, pushNotificationProviderPort, new ObjectMapper());
-        when(deliveryRepositoryPort.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        service = new DispatchNotificationService(deviceRepositoryPort, deliveryRepositoryPort,
+                pushNotificationProviderPort, new ObjectMapper());
         when(deliveryRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test
-    void sendsNothingAndTouchesNoProviderWhenNoDeviceMatches() {
-        Notification notification = notification();
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of());
-
-        DispatchNotificationUseCase.Result result = service.execute(notification);
+    void sendsNothingAndTouchesNoProviderWhenThereIsNothingPrepared() {
+        DispatchNotificationService.Result result =
+                service.send(new PreparedDispatch(notification(), List.of(), List.of()));
 
         assertThat(result.devicesTargeted()).isZero();
         verifyNoInteractions(pushNotificationProviderPort);
-        verify(notificationRepositoryPort, never()).saveRecipients(any());
+    }
+
+    @Test
+    void anAcceptedTicketMarksTheDeliverySent() {
+        PreparedDispatch prepared = prepared(USER_A);
+        when(pushNotificationProviderPort.send(any())).thenReturn(List.of(PushResult.accepted("ticket-1")));
+
+        assertThat(service.send(prepared).sent()).isEqualTo(1);
+        assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.SENT);
     }
 
     /**
-     * Three phones belonging to two people is two inbox entries, not three —
-     * the notification is per user, the delivery is per device.
+     * The device snapshot in a PreparedDispatch predates the send. Writing it
+     * back would revert a token the owner re-registered while the push was in
+     * flight, so only the one field that must change is changed.
      */
     @Test
-    void recordsOneRecipientPerUserRegardlessOfHowManyDevicesTheyHave() {
-        Notification notification = notification();
-        List<NotificationDevice> devices = List.of(
-                device(USER_A, "a-phone"), device(USER_A, "a-tablet"), device(USER_B, "b-phone"));
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(devices);
-        when(pushNotificationProviderPort.send(any())).thenReturn(List.of(
-                PushResult.accepted("t1"), PushResult.accepted("t2"), PushResult.accepted("t3")));
-
-        service.execute(notification);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<UserNotification>> captor = ArgumentCaptor.forClass(List.class);
-        verify(notificationRepositoryPort).saveRecipients(captor.capture());
-        assertThat(captor.getValue()).hasSize(2)
-                .extracting(UserNotification::getUserId)
-                .containsExactlyInAnyOrder(USER_A, USER_B);
-    }
-
-    @Test
-    void anAcceptedTicketMarksTheDeliverySentWithTheProvidersId() {
-        DeliveryStatus status = dispatchOne(PushResult.accepted("ticket-1")).getStatus();
-
-        assertThat(status).isEqualTo(DeliveryStatus.SENT);
-    }
-
-    @Test
-    void aDeadTokenMarksTheDeliveryInvalidAndDisablesTheDevice() {
-        Notification notification = notification();
-        NotificationDevice device = device(USER_A, "a-phone");
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device));
+    void aDeadTokenDisablesTheDeviceByIdRatherThanReSavingAStaleSnapshot() {
+        PreparedDispatch prepared = prepared(USER_A);
+        NotificationDevice device = prepared.devices().get(0);
         when(pushNotificationProviderPort.send(any()))
                 .thenReturn(List.of(PushResult.invalidToken("DeviceNotRegistered")));
 
-        DispatchNotificationUseCase.Result result = service.execute(notification);
+        DispatchNotificationService.Result result = service.send(prepared);
 
         assertThat(result.invalidTokens()).isEqualTo(1);
-        assertThat(device.isEnabled()).isFalse();
-        verify(deviceRepositoryPort).saveAll(List.of(device));
+        assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.INVALID_TOKEN);
+        verify(deviceRepositoryPort).disableById(device.getId());
+        verify(deviceRepositoryPort, never()).save(any());
+        verify(deviceRepositoryPort, never()).saveAll(any());
     }
 
     @Test
-    void aTransientFailureLeavesTheDeliveryPendingAndTheDeviceEnabled() {
-        Notification notification = notification();
-        NotificationDevice device = device(USER_A, "a-phone");
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device));
+    void aTransientFailureLeavesTheDeliveryPendingForTheRetryPass() {
+        PreparedDispatch prepared = prepared(USER_A);
         when(pushNotificationProviderPort.send(any()))
                 .thenReturn(List.of(PushResult.retryable("Expo unreachable")));
 
-        service.execute(notification);
+        DispatchNotificationService.Result result = service.send(prepared);
 
-        assertThat(device.isEnabled()).isTrue();
-        assertThat(capturedDelivery().getStatus()).isEqualTo(DeliveryStatus.PENDING);
-        assertThat(capturedDelivery().getAttemptCount()).isEqualTo(1);
+        assertThat(result.retryable()).isEqualTo(1);
+        assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.PENDING);
+        verify(deviceRepositoryPort, never()).disableById(any());
     }
 
     @Test
     void aPermanentRejectionFailsTheDeliveryWithoutDisablingTheDevice() {
-        Notification notification = notification();
-        NotificationDevice device = device(USER_A, "a-phone");
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device));
+        PreparedDispatch prepared = prepared(USER_A);
         when(pushNotificationProviderPort.send(any()))
                 .thenReturn(List.of(PushResult.rejected("MessageTooBig")));
 
-        DispatchNotificationUseCase.Result result = service.execute(notification);
+        assertThat(service.send(prepared).failed()).isEqualTo(1);
+        assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.FAILED);
+        verify(deviceRepositoryPort, never()).disableById(any());
+    }
 
-        assertThat(result.failed()).isEqualTo(1);
-        assertThat(device.isEnabled()).isTrue();
-        assertThat(capturedDelivery().getStatus()).isEqualTo(DeliveryStatus.FAILED);
+    /**
+     * Counted before the provider is called, so a sender that keeps dying
+     * mid-flight still exhausts its budget rather than retrying forever.
+     */
+    @Test
+    void countsTheAttemptEvenWhenTheProviderThrows() {
+        PreparedDispatch prepared = prepared(USER_A);
+        when(pushNotificationProviderPort.send(any())).thenThrow(new IllegalStateException("boom"));
+
+        DispatchNotificationService.Result result = service.send(prepared);
+
+        assertThat(result.retryable()).isEqualTo(1);
+        assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.PENDING);
+        assertThat(prepared.deliveries().get(0).getAttemptCount()).isEqualTo(1);
     }
 
     /**
@@ -157,26 +139,22 @@ class DispatchNotificationServiceTest {
      * nothing about the rest; assuming they arrived would drop them silently.
      */
     @Test
-    void amissingResultIsTreatedAsRetryableRatherThanAsSuccess() {
-        Notification notification = notification();
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device(USER_A, "a-phone"), device(USER_B, "b-phone")));
+    void aMissingResultIsTreatedAsRetryableRatherThanAsSuccess() {
+        PreparedDispatch prepared = prepared(USER_A, USER_B);
         when(pushNotificationProviderPort.send(any())).thenReturn(List.of(PushResult.accepted("t1")));
 
-        DispatchNotificationUseCase.Result result = service.execute(notification);
+        DispatchNotificationService.Result result = service.send(prepared);
 
         assertThat(result.sent()).isEqualTo(1);
+        assertThat(result.retryable()).isEqualTo(1);
         assertThat(result.failed()).isZero();
     }
 
     @Test
     void carriesTheDeepLinkMetadataThroughToThePushPayload() {
-        Notification notification = notification();
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device(USER_A, "a-phone")));
         when(pushNotificationProviderPort.send(any())).thenReturn(List.of(PushResult.accepted("t1")));
 
-        service.execute(notification);
+        service.send(prepared(USER_A));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<PushMessage>> captor = ArgumentCaptor.forClass(List.class);
@@ -191,27 +169,34 @@ class DispatchNotificationServiceTest {
     /** An unreadable payload costs the deep link, never the notification. */
     @Test
     void stillSendsWhenTheStoredDataPayloadCannotBeParsed() {
-        Notification notification = Notification.create(TENANT, NotificationType.NEW_PODCAST,
+        Notification broken = Notification.create(TENANT, NotificationType.NEW_PODCAST,
                 "New podcast available", "Episode", null, "PODCAST", "123", "not json");
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device(USER_A, "a-phone")));
+        NotificationDevice device = device(USER_A, "a-phone");
+        PreparedDispatch prepared = new PreparedDispatch(broken, List.of(device),
+                List.of(NotificationDelivery.pending(broken.getId(), USER_A, device.getId(), PushProvider.EXPO)));
         when(pushNotificationProviderPort.send(any())).thenReturn(List.of(PushResult.accepted("t1")));
 
-        assertThat(service.execute(notification).sent()).isEqualTo(1);
+        assertThat(service.send(prepared).sent()).isEqualTo(1);
     }
 
-    private NotificationDelivery dispatchOne(PushResult result) {
-        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
-                .thenReturn(List.of(device(USER_A, "a-phone")));
-        when(pushNotificationProviderPort.send(any())).thenReturn(List.of(result));
-        service.execute(notification());
-        return capturedDelivery();
+    @Test
+    void refusesAPreparedDispatchWhoseListsDoNotLineUp() {
+        Notification notification = notification();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new PreparedDispatch(
+                        notification, List.of(device(USER_A, "a-phone")), List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
-    private NotificationDelivery capturedDelivery() {
-        ArgumentCaptor<NotificationDelivery> captor = ArgumentCaptor.forClass(NotificationDelivery.class);
-        verify(deliveryRepositoryPort).save(captor.capture());
-        return captor.getValue();
+    private PreparedDispatch prepared(UUID... userIds) {
+        Notification notification = notification();
+        List<NotificationDevice> devices = java.util.Arrays.stream(userIds)
+                .map(userId -> device(userId, "phone-" + userId))
+                .toList();
+        List<NotificationDelivery> deliveries = devices.stream()
+                .map(device -> NotificationDelivery.pending(notification.getId(), device.getUserId(),
+                        device.getId(), PushProvider.EXPO))
+                .toList();
+        return new PreparedDispatch(notification, devices, deliveries);
     }
 
     private Notification notification() {

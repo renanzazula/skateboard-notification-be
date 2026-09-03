@@ -33,5 +33,16 @@ public interface DeviceRepositoryPort {
 
     NotificationDevice save(NotificationDevice device);
 
+    /**
+     * Disables one device by id, without writing back a whole aggregate.
+     *
+     * <p>Dispatch learns a token is dead only after the provider answers, by
+     * which time the device snapshot it loaded may be stale — the owner could
+     * have re-registered mid-fan-out. Saving that snapshot would revert their
+     * new token and disable a live device, so the one field that must change
+     * is changed on its own.
+     */
+    void disableById(UUID id);
+
     List<NotificationDevice> saveAll(List<NotificationDevice> devices);
 }

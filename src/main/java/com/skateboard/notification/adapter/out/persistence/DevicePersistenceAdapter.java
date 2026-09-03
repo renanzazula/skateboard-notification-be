@@ -8,6 +8,7 @@ import com.skateboard.notification.domain.model.PushProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -49,6 +50,12 @@ public class DevicePersistenceAdapter implements DeviceRepositoryPort {
     @Transactional
     public NotificationDevice save(NotificationDevice device) {
         return toDomain(repository.save(toEntity(device)));
+    }
+
+    @Override
+    @Transactional
+    public void disableById(UUID id) {
+        repository.disableById(id, Instant.now());
     }
 
     @Override

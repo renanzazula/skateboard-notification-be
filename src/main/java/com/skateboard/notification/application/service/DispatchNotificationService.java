@@ -2,117 +2,100 @@ package com.skateboard.notification.application.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skateboard.notification.application.port.in.DispatchNotificationUseCase;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
-import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
 import com.skateboard.notification.application.port.out.PushResult;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDelivery;
 import com.skateboard.notification.domain.model.NotificationDevice;
-import com.skateboard.notification.domain.model.UserNotification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
 
 /**
- * Recipient resolution and delivery: the second half of handling an event.
+ * Sends an already-persisted {@link PreparedDispatch} and records what the
+ * provider said about each message.
  *
- * <p>Ordering matters here. Recipients and PENDING deliveries are written
- * before anything is sent, so a crash mid-fan-out leaves a record of what was
- * owed rather than nothing at all. Sending then updates rows in place.
+ * <p>Deliberately not transactional: it makes a network call, and holding a
+ * database transaction across that would pin connections for as long as Expo
+ * takes to answer. The rows it updates were committed before it ran, so a
+ * crash here loses no record of what was owed.
  */
 @Service
-public class DispatchNotificationService implements DispatchNotificationUseCase {
+public class DispatchNotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(DispatchNotificationService.class);
 
+    public record Result(int devicesTargeted, int sent, int retryable, int failed, int invalidTokens) {
+
+        static Result none() {
+            return new Result(0, 0, 0, 0, 0);
+        }
+    }
+
     private final DeviceRepositoryPort deviceRepositoryPort;
-    private final NotificationRepositoryPort notificationRepositoryPort;
     private final DeliveryRepositoryPort deliveryRepositoryPort;
     private final PushNotificationProviderPort pushNotificationProviderPort;
     private final ObjectMapper objectMapper;
 
     public DispatchNotificationService(DeviceRepositoryPort deviceRepositoryPort,
-                                        NotificationRepositoryPort notificationRepositoryPort,
                                         DeliveryRepositoryPort deliveryRepositoryPort,
                                         PushNotificationProviderPort pushNotificationProviderPort,
                                         ObjectMapper objectMapper) {
         this.deviceRepositoryPort = deviceRepositoryPort;
-        this.notificationRepositoryPort = notificationRepositoryPort;
         this.deliveryRepositoryPort = deliveryRepositoryPort;
         this.pushNotificationProviderPort = pushNotificationProviderPort;
         this.objectMapper = objectMapper;
     }
 
-    @Override
-    public Result execute(Notification notification) {
-        List<NotificationDevice> devices = deviceRepositoryPort
-                .findNotifiableDevices(notification.getTenantId(), notification.getType());
-
-        if (devices.isEmpty()) {
-            log.info("notificationId={} type={} tenantId={} matched no notifiable devices",
-                    notification.getId(), notification.getType(), notification.getTenantId());
-            return new Result(0, 0, 0, 0);
+    public Result send(PreparedDispatch prepared) {
+        if (prepared.isEmpty()) {
+            return Result.none();
         }
 
-        recordRecipients(notification, devices);
-        List<NotificationDelivery> deliveries = recordPendingDeliveries(notification, devices);
-
+        Notification notification = prepared.notification();
         Map<String, String> data = readData(notification);
-        List<PushMessage> messages = devices.stream()
+
+        List<PushMessage> messages = prepared.devices().stream()
                 .map(device -> new PushMessage(device.getPushToken(), notification.getTitle(),
                         notification.getBody(), data))
                 .toList();
 
-        List<PushResult> results = pushNotificationProviderPort.send(messages);
-        return applyResults(notification, devices, deliveries, results);
+        prepared.deliveries().forEach(NotificationDelivery::beginAttempt);
+
+        List<PushResult> results;
+        try {
+            results = pushNotificationProviderPort.send(messages);
+        } catch (RuntimeException e) {
+            // The provider contract says a failed batch comes back as retryable
+            // results, but an unexpected throw must not lose the whole
+            // fan-out: every delivery stays PENDING with its attempt counted,
+            // so the retry pass owns them from here.
+            log.error("notificationId={} provider threw; leaving {} deliveries pending",
+                    notification.getId(), prepared.deliveries().size(), e);
+            results = List.of();
+        }
+
+        return applyResults(prepared, results);
     }
 
-    /**
-     * One row per distinct user, not per device: three phones belonging to the
-     * same person are one notification in their inbox.
-     */
-    private void recordRecipients(Notification notification, List<NotificationDevice> devices) {
-        Set<UUID> userIds = new LinkedHashSet<>();
-        devices.forEach(device -> userIds.add(device.getUserId()));
-
-        List<UserNotification> recipients = userIds.stream()
-                .map(userId -> UserNotification.create(notification.getId(), userId))
-                .toList();
-        notificationRepositoryPort.saveRecipients(recipients);
-    }
-
-    private List<NotificationDelivery> recordPendingDeliveries(Notification notification,
-                                                                List<NotificationDevice> devices) {
-        List<NotificationDelivery> deliveries = devices.stream()
-                .map(device -> NotificationDelivery.pending(notification.getId(), device.getUserId(),
-                        device.getId(), device.getPushProvider()))
-                .toList();
-        return deliveryRepositoryPort.saveAll(deliveries);
-    }
-
-    private Result applyResults(Notification notification,
-                                 List<NotificationDevice> devices,
-                                 List<NotificationDelivery> deliveries,
-                                 List<PushResult> results) {
+    private Result applyResults(PreparedDispatch prepared, List<PushResult> results) {
+        Notification notification = prepared.notification();
         int sent = 0;
+        int retryable = 0;
         int failed = 0;
         int invalidTokens = 0;
         List<NotificationDevice> toDisable = new ArrayList<>();
 
-        for (int i = 0; i < deliveries.size(); i++) {
-            NotificationDelivery delivery = deliveries.get(i);
-            NotificationDevice device = devices.get(i);
+        for (int i = 0; i < prepared.deliveries().size(); i++) {
+            NotificationDelivery delivery = prepared.deliveries().get(i);
+            NotificationDevice device = prepared.devices().get(i);
             PushResult result = i < results.size()
                     ? results.get(i)
                     : PushResult.retryable("Provider returned no result for this message");
@@ -122,13 +105,15 @@ public class DispatchNotificationService implements DispatchNotificationUseCase 
                     delivery.markSent(result.providerMessageId());
                     sent++;
                 }
-                case RETRYABLE -> delivery.markRetryable(result.detail());
+                case RETRYABLE -> {
+                    delivery.markRetryable(result.detail());
+                    retryable++;
+                }
                 case INVALID_TOKEN -> {
                     delivery.markInvalidToken(result.detail());
                     // The token will never work again, so keeping the device
                     // enabled would burn an attempt on every future
                     // notification (spec §25).
-                    device.disable();
                     toDisable.add(device);
                     invalidTokens++;
                 }
@@ -140,15 +125,16 @@ public class DispatchNotificationService implements DispatchNotificationUseCase 
             deliveryRepositoryPort.save(delivery);
         }
 
-        if (!toDisable.isEmpty()) {
-            deviceRepositoryPort.saveAll(toDisable);
-        }
+        // Disabled by id rather than by writing back the device snapshot this
+        // dispatch loaded: that snapshot predates the send, and re-saving it
+        // would revert a device the owner re-registered in the meantime.
+        toDisable.forEach(device -> deviceRepositoryPort.disableById(device.getId()));
 
-        log.info("notificationId={} type={} tenantId={} devices={} sent={} failed={} invalidTokens={}",
+        log.info("notificationId={} type={} tenantId={} devices={} sent={} retryable={} failed={} invalidTokens={}",
                 notification.getId(), notification.getType(), notification.getTenantId(),
-                devices.size(), sent, failed, invalidTokens);
+                prepared.devices().size(), sent, retryable, failed, invalidTokens);
 
-        return new Result(devices.size(), sent, failed, invalidTokens);
+        return new Result(prepared.devices().size(), sent, retryable, failed, invalidTokens);
     }
 
     /**

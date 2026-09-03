@@ -1,9 +1,11 @@
 package com.skateboard.notification.adapter.out.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,6 +13,15 @@ import java.util.UUID;
 public interface SpringNotificationDeviceRepository extends JpaRepository<NotificationDeviceJpaEntity, UUID> {
 
     Optional<NotificationDeviceJpaEntity> findByUserIdAndDeviceIdentifier(UUID userId, String deviceIdentifier);
+
+    /**
+     * Flips one column, so a dead token learned about after a send cannot
+     * clobber a re-registration that happened while the send was in flight.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationDeviceJpaEntity d SET d.enabled = false, d.updatedAt = :now "
+            + "WHERE d.id = :id AND d.enabled = true")
+    int disableById(@Param("id") UUID id, @Param("now") Instant now);
 
     List<NotificationDeviceJpaEntity> findByPushTokenAndUserIdNot(String pushToken, UUID userId);
 

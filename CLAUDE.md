@@ -77,10 +77,25 @@ infrastructure/         → messaging (topology), push (config), security, web
   notifications whenever the client could not de-register (involuntary sign-out, crash, reinstall).
 - **`tenant_id` is on every table and in every recipient query**, though exactly one tenant exists. The
   isolation is cheap to guarantee now and expensive to retrofit.
-- **Idempotency is a primary-key collision, not a check-then-insert.** `ProcessedEventPersistenceAdapter`
-  claims the event id in its own `REQUIRES_NEW` transaction; two consumers handed the same redelivery
-  would both pass a `SELECT`. Producers re-emit with a *stable* event id (podcast-be derives it from the
-  post id), so a lost event is recoverable while a duplicate push is not retractable.
+- **The idempotency claim commits with the work, not before it.** `NotificationRecorder` owns one
+  transaction covering the claim, the notification, its recipients and a PENDING delivery per device;
+  `ProcessedEventPersistenceAdapter` joins it rather than opening its own. Claiming separately was a
+  bug: any later failure left the event marked processed with nothing written, and the redelivery was
+  then recognised as a duplicate and **acked** — losing the notification with no dead-letter entry.
+  Do not reintroduce `REQUIRES_NEW` here, and do not catch the constraint violation: it marks the
+  transaction rollback-only, so the commit throws regardless.
+- **Sending happens after that transaction commits, never inside it.** Holding a transaction across a
+  call to Expo would pin a connection for as long as Expo takes. The committed PENDING rows are the
+  record of what is still owed.
+- **`RetryPendingDeliveriesService` is what makes `markRetryable` mean anything.** Deliveries the
+  provider did not accept are re-sent by a scheduled pass that claims rows with
+  `FOR UPDATE SKIP LOCKED` — no scheduler lock needed, and two instances share a backlog instead of
+  duplicating it. Attempts are counted at `beginAttempt()`, *before* the provider call, so a sender
+  that keeps dying mid-flight still exhausts its budget instead of retrying forever.
+- **A stable event id prevents duplicates; it does not by itself recover losses.** podcast-be sets
+  `notified_at` on broker confirm, so it will not re-emit for a post the consumer then failed on.
+  Recovery on this side comes from the transaction boundary above and from the retry pass — not from
+  the producer.
 - **The Expo failure taxonomy.** `DeviceNotRegistered` disables the device; rate limiting, 5xx and
   transport failures stay retryable; anything else is a permanent rejection. A batch that never reached
   Expo is owed in full — never assumed sent. Expo answers `200` with a per-message ticket array, so an

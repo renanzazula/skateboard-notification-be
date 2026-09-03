@@ -8,6 +8,7 @@ import com.skateboard.notification.domain.model.PushProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 
 @Component
@@ -30,6 +31,30 @@ public class DeliveryPersistenceAdapter implements DeliveryRepositoryPort {
     @Transactional
     public NotificationDelivery save(NotificationDelivery delivery) {
         return toDomain(repository.save(toEntity(delivery)));
+    }
+
+    /**
+     * Selects under a row lock and stamps the attempt in the same transaction,
+     * so the claim is durable before the caller starts sending. The lock is
+     * released at commit; what keeps another instance off these rows after
+     * that is the attempt timestamp, which moves them out of the next poll's
+     * window.
+     */
+    @Override
+    @Transactional
+    public List<NotificationDelivery> claimRetryable(int maxAttempts, Instant notAttemptedSince, int limit) {
+        List<NotificationDeliveryJpaEntity> locked =
+                repository.lockRetryable(maxAttempts, notAttemptedSince, limit);
+        if (locked.isEmpty()) {
+            return List.of();
+        }
+        List<NotificationDelivery> claimed = locked.stream().map(this::toDomain).toList();
+        claimed.forEach(NotificationDelivery::beginAttempt);
+        return toDomainAll(repository.saveAll(claimed.stream().map(this::toEntity).toList()));
+    }
+
+    private List<NotificationDelivery> toDomainAll(List<NotificationDeliveryJpaEntity> entities) {
+        return entities.stream().map(this::toDomain).toList();
     }
 
     private NotificationDelivery toDomain(NotificationDeliveryJpaEntity entity) {

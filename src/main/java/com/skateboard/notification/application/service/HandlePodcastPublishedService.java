@@ -2,10 +2,7 @@ package com.skateboard.notification.application.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skateboard.notification.application.port.in.DispatchNotificationUseCase;
 import com.skateboard.notification.application.port.in.HandlePodcastPublishedUseCase;
-import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
-import com.skateboard.notification.application.port.out.ProcessedEventPort;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationType;
 import org.slf4j.Logger;
@@ -14,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Turns "a podcast was published" into "these people get told".
@@ -30,38 +28,40 @@ public class HandlePodcastPublishedService implements HandlePodcastPublishedUseC
     private static final String EVENT_TYPE = "PODCAST_PUBLISHED";
     private static final String REFERENCE_TYPE = "PODCAST";
 
-    private final ProcessedEventPort processedEventPort;
     private final NotificationTemplateResolver templateResolver;
-    private final NotificationRepositoryPort notificationRepositoryPort;
-    private final DispatchNotificationUseCase dispatchNotificationUseCase;
+    private final NotificationRecorder notificationRecorder;
+    private final DispatchNotificationService dispatchNotificationService;
     private final ObjectMapper objectMapper;
 
-    public HandlePodcastPublishedService(ProcessedEventPort processedEventPort,
-                                          NotificationTemplateResolver templateResolver,
-                                          NotificationRepositoryPort notificationRepositoryPort,
-                                          DispatchNotificationUseCase dispatchNotificationUseCase,
+    public HandlePodcastPublishedService(NotificationTemplateResolver templateResolver,
+                                          NotificationRecorder notificationRecorder,
+                                          DispatchNotificationService dispatchNotificationService,
                                           ObjectMapper objectMapper) {
-        this.processedEventPort = processedEventPort;
         this.templateResolver = templateResolver;
-        this.notificationRepositoryPort = notificationRepositoryPort;
-        this.dispatchNotificationUseCase = dispatchNotificationUseCase;
+        this.notificationRecorder = notificationRecorder;
+        this.dispatchNotificationService = dispatchNotificationService;
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Two phases, and the split is the point. Everything that must be
+     * consistent — the idempotency claim, the notification, its recipients and
+     * a PENDING delivery per device — commits together in
+     * {@link NotificationRecorder}. Only then is anything sent.
+     *
+     * <p>A failure in the first phase rolls the claim back with the rest, so
+     * the redelivery is a real retry and an unfixable message still reaches the
+     * dead-letter queue. A failure in the second leaves durable PENDING rows
+     * that {@link RetryPendingDeliveriesService} owns. Neither loses the
+     * notification silently, which the earlier claim-first-and-commit ordering
+     * did.
+     */
     @Override
     public Result execute(Input input) {
-        // Claimed first and in its own transaction: a broker can redeliver, a
-        // producer re-emits with a stable id, and neither must reach a
-        // handset twice (spec §24).
-        if (!processedEventPort.claim(input.eventId(), EVENT_TYPE)) {
-            log.info("eventId={} already processed; ignoring redelivery", input.eventId());
-            return Result.duplicate();
-        }
-
         NotificationTemplateResolver.Template template = templateResolver
                 .resolve(NotificationType.NEW_PODCAST, Map.of("title", nullSafe(input.title())));
 
-        Notification notification = notificationRepositoryPort.save(Notification.create(
+        Notification draft = Notification.create(
                 input.tenantId(),
                 NotificationType.NEW_PODCAST,
                 template.title(),
@@ -69,13 +69,20 @@ public class HandlePodcastPublishedService implements HandlePodcastPublishedUseC
                 input.imageUrl(),
                 REFERENCE_TYPE,
                 input.podcastId(),
-                buildData(input)));
+                buildData(input));
 
-        DispatchNotificationUseCase.Result dispatch = dispatchNotificationUseCase.execute(notification);
+        Optional<PreparedDispatch> prepared =
+                notificationRecorder.record(input.eventId(), EVENT_TYPE, draft);
+
+        if (prepared.isEmpty()) {
+            return Result.duplicate();
+        }
+
+        DispatchNotificationService.Result dispatch = dispatchNotificationService.send(prepared.get());
 
         log.info("eventId={} notificationId={} tenantId={} podcastId={} devices={} sent={}",
-                input.eventId(), notification.getId(), input.tenantId(), input.podcastId(),
-                dispatch.devicesTargeted(), dispatch.sent());
+                input.eventId(), prepared.get().notification().getId(), input.tenantId(),
+                input.podcastId(), dispatch.devicesTargeted(), dispatch.sent());
 
         return new Result(true, dispatch.devicesTargeted(), dispatch.sent());
     }

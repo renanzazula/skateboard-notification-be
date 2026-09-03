@@ -63,12 +63,28 @@ public class NotificationDelivery {
                 providerMessageId, attemptCount, lastAttemptAt, failureReason, createdAt, updatedAt);
     }
 
+    /**
+     * Records that an attempt is starting, before the provider is called.
+     *
+     * <p>Counting here rather than when the result comes back is what bounds
+     * retries against a sender that keeps dying mid-flight: a crash between
+     * the call and the result would otherwise leave the counter untouched and
+     * the delivery retryable forever. It also doubles as the claim a retry
+     * pass persists, so a second instance polling the same window skips this
+     * row.
+     */
+    public void beginAttempt() {
+        this.attemptCount++;
+        this.lastAttemptAt = Instant.now();
+        this.updatedAt = this.lastAttemptAt;
+    }
+
     /** The provider accepted the message. Not "delivered", and never "read". */
     public void markSent(String providerMessageId) {
         this.status = DeliveryStatus.SENT;
         this.providerMessageId = providerMessageId;
         this.failureReason = null;
-        recordAttempt();
+        touch();
     }
 
     /**
@@ -79,27 +95,30 @@ public class NotificationDelivery {
     public void markRetryable(String failureReason) {
         this.status = DeliveryStatus.PENDING;
         this.failureReason = failureReason;
-        recordAttempt();
+        touch();
     }
 
     /** A permanent rejection. No retry will change the answer. */
     public void markFailed(String failureReason) {
         this.status = DeliveryStatus.FAILED;
         this.failureReason = failureReason;
-        recordAttempt();
+        touch();
     }
 
     /** The token is dead — the caller is expected to disable the device too. */
     public void markInvalidToken(String failureReason) {
         this.status = DeliveryStatus.INVALID_TOKEN;
         this.failureReason = failureReason;
-        recordAttempt();
+        touch();
     }
 
-    private void recordAttempt() {
-        this.attemptCount++;
-        this.lastAttemptAt = Instant.now();
-        this.updatedAt = this.lastAttemptAt;
+    /** Whether another attempt is still permitted for this delivery. */
+    public boolean hasAttemptsLeft(int maxAttempts) {
+        return status == DeliveryStatus.PENDING && attemptCount < maxAttempts;
+    }
+
+    private void touch() {
+        this.updatedAt = Instant.now();
     }
 
     public UUID getId()                  { return id; }

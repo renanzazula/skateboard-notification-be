@@ -24,6 +24,17 @@ public class NotificationTemplateResolver {
     private record Definition(String title, String bodyTemplate) {
     }
 
+    /**
+     * Matches {@code notification.body VARCHAR(500)}. Upstream titles are wider
+     * than that — skateboard-podcast-be stores {@code posts.title VARCHAR(1000)}
+     * — so an untruncated body would fail the INSERT, and it would fail
+     * *after* the event was claimed. Every push surface truncates long text on
+     * screen anyway, so there is nothing to lose by doing it here.
+     */
+    private static final int MAX_BODY_LENGTH = 500;
+
+    private static final String ELLIPSIS = "\u2026";
+
     private static final Map<NotificationType, Definition> DEFINITIONS = Map.of(
             NotificationType.NEW_PODCAST,
             new Definition("New podcast available", "{{title}}")
@@ -40,7 +51,14 @@ public class NotificationTemplateResolver {
         if (definition == null) {
             throw new IllegalArgumentException("No notification template for type " + type);
         }
-        return new Template(definition.title(), render(definition.bodyTemplate(), variables));
+        return new Template(definition.title(), truncate(render(definition.bodyTemplate(), variables)));
+    }
+
+    private String truncate(String body) {
+        if (body.length() <= MAX_BODY_LENGTH) {
+            return body;
+        }
+        return body.substring(0, MAX_BODY_LENGTH - 1) + ELLIPSIS;
     }
 
     private String render(String template, Map<String, String> variables) {
