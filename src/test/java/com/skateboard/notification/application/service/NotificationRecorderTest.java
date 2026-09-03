@@ -2,6 +2,7 @@ package com.skateboard.notification.application.service;
 
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.NotificationMetricsPort;
 import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
 import com.skateboard.notification.application.port.out.ProcessedEventPort;
 import com.skateboard.notification.domain.model.DevicePlatform;
@@ -49,6 +50,7 @@ class NotificationRecorderTest {
     @Mock private NotificationRepositoryPort notificationRepositoryPort;
     @Mock private DeviceRepositoryPort deviceRepositoryPort;
     @Mock private DeliveryRepositoryPort deliveryRepositoryPort;
+    @Mock private NotificationMetricsPort metricsPort;
 
     private NotificationRecorder recorder;
 
@@ -56,7 +58,7 @@ class NotificationRecorderTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         recorder = new NotificationRecorder(processedEventPort, notificationRepositoryPort,
-                deviceRepositoryPort, deliveryRepositoryPort);
+                deviceRepositoryPort, deliveryRepositoryPort, metricsPort);
         when(notificationRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(deliveryRepositoryPort.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -70,6 +72,8 @@ class NotificationRecorderTest {
         verifyNoInteractions(notificationRepositoryPort);
         verifyNoInteractions(deviceRepositoryPort);
         verifyNoInteractions(deliveryRepositoryPort);
+        verify(metricsPort).eventIgnoredAsDuplicate("PODCAST_PUBLISHED");
+        verify(metricsPort, never()).eventProcessed(any());
     }
 
     @Test
@@ -83,6 +87,7 @@ class NotificationRecorderTest {
         InOrder inOrder = Mockito.inOrder(processedEventPort, notificationRepositoryPort);
         inOrder.verify(processedEventPort).claim(EVENT, "PODCAST_PUBLISHED");
         inOrder.verify(notificationRepositoryPort).save(any());
+        verify(metricsPort).eventProcessed("PODCAST_PUBLISHED");
     }
 
     /**

@@ -3,6 +3,7 @@ package com.skateboard.notification.application.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.NotificationMetricsPort;
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
 import com.skateboard.notification.application.port.out.PushResult;
@@ -44,6 +45,7 @@ class DispatchNotificationServiceTest {
     @Mock private DeviceRepositoryPort deviceRepositoryPort;
     @Mock private DeliveryRepositoryPort deliveryRepositoryPort;
     @Mock private PushNotificationProviderPort pushNotificationProviderPort;
+    @Mock private NotificationMetricsPort metricsPort;
 
     private DispatchNotificationService service;
 
@@ -51,7 +53,7 @@ class DispatchNotificationServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new DispatchNotificationService(deviceRepositoryPort, deliveryRepositoryPort,
-                pushNotificationProviderPort, new ObjectMapper());
+                pushNotificationProviderPort, metricsPort, new ObjectMapper());
         when(deliveryRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -71,6 +73,7 @@ class DispatchNotificationServiceTest {
 
         assertThat(service.send(prepared).sent()).isEqualTo(1);
         assertThat(prepared.deliveries().get(0).getStatus()).isEqualTo(DeliveryStatus.SENT);
+        verify(metricsPort).recordDeliveryOutcomes(NotificationType.NEW_PODCAST, 1, 0, 0, 0);
     }
 
     /**

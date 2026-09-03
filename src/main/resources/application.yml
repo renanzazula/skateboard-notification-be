@@ -99,6 +99,33 @@ push:
     batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
     cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
 
+retention:
+  enabled: ${RETENTION_ENABLED:true}
+  # A notification, and the user_notification + notification_delivery rows that
+  # cascade from it, is deleted once older than this. Generous because the
+  # Phase 2 inbox history API reads this table — revisit when it ships.
+  notification-ttl-days: ${RETENTION_NOTIFICATION_TTL_DAYS:90}
+  # The idempotency ledger only has to outlast the longest possible redelivery.
+  # podcast-be marks a post notified on broker confirm and the AMQP retry
+  # window is minutes, so a week is already far more than enough.
+  processed-event-ttl-days: ${RETENTION_PROCESSED_EVENT_TTL_DAYS:7}
+  batch-size: ${RETENTION_BATCH_SIZE:500}
+  # Bounds one pass, so a large first backlog drains over several nights
+  # instead of holding a delete lock for minutes.
+  max-batches-per-run: ${RETENTION_MAX_BATCHES_PER_RUN:20}
+  cron: ${RETENTION_CRON:0 30 3 * * *}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # health for the platform's probe; prometheus for whatever scrapes the
+        # counters later. Nothing scrapes it today.
+        include: health,prometheus
+  metrics:
+    tags:
+      application: notification
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%thread] %logger{36} - %msg%n"

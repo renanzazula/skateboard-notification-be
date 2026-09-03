@@ -23,4 +23,11 @@ public interface DeliveryRepositoryPort {
      * @param notAttemptedSince only consider deliveries last tried before this instant
      */
     List<NotificationDelivery> claimRetryable(int maxAttempts, Instant notAttemptedSince, int limit);
+
+    /**
+     * How many deliveries are still owed a send. Backs the
+     * {@code notification_deliveries_pending} gauge — the first number to look
+     * at when asking whether the retry pass is keeping up.
+     */
+    long countPendingDeliveries();
 }

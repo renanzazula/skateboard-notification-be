@@ -98,6 +98,23 @@ push:
     batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
     cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
 
+retention:
+  enabled: ${RETENTION_ENABLED:true}
+  notification-ttl-days: ${RETENTION_NOTIFICATION_TTL_DAYS:90}
+  processed-event-ttl-days: ${RETENTION_PROCESSED_EVENT_TTL_DAYS:7}
+  batch-size: ${RETENTION_BATCH_SIZE:500}
+  max-batches-per-run: ${RETENTION_MAX_BATCHES_PER_RUN:20}
+  cron: ${RETENTION_CRON:0 30 3 * * *}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: notification
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%thread] %logger{36} - %msg%n"
