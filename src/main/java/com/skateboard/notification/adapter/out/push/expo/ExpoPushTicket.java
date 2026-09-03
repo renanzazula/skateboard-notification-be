@@ -18,7 +18,7 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ExpoPushTicket(String status, String id, String message, Map<String, Object> details) {
 
-    static final String STATUS_OK = "ok";
+    public static final String STATUS_OK = "ok";
 
     public String errorCode() {
         if (details == null) {

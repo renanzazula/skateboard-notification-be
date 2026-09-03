@@ -129,6 +129,14 @@
             <artifactId>rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Event handling is asynchronous by construction, so the messaging
+             test has to wait for an outcome rather than assert immediately.
+             Managed by the Boot BOM. -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Exercises ExpoPushNotificationProvider against a real HTTP server
              on loopback rather than mocking WebClient, matching how
              skateboard-podcast-be tests its YouTube/Spotify clients. -->
