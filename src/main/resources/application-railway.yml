@@ -12,6 +12,11 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/skateboard}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    hikari:
+      # Native @Query SQL is sent verbatim — hibernate.default_schema does not
+      # cover it. Without this the retry claim and the fan-out fail with
+      # 42P01 "relation notification_delivery does not exist".
+      schema: skateboard_notification
 
   jpa:
     # Flyway owns the schema (db/migration); Hibernate only validates its matches.
