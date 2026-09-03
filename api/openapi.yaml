@@ -1,0 +1,298 @@
+# Canonical spec for this service — wired into the build.
+#
+# pom.xml's openapi-generator-maven-plugin generates the DevicesApi and
+# PreferencesApi controller interfaces and all request/response DTOs from this
+# file at build time (into com.skateboard.notification.infrastructure.web.api /
+# ...web.dto). Edit this file to change the API — there is no separate upstream
+# spec to sync from. skateboard-ui-backend vendors a copy of it to generate its
+# outbound client; re-copy it there by hand when this changes.
+#
+# Scope: the operations the mobile app needs to receive push. Everything the
+# service does for a *published podcast* is driven by the PODCAST_PUBLISHED
+# event off RabbitMQ, not by any endpoint here — there is deliberately no
+# "send a notification" API. Notification history (GET /notifications,
+# PATCH /notifications/{id}/read) is modelled in the schema but not exposed
+# yet; see the Phase 2 scope in the implementation plan.
+#
+# The /preferences contract is byte-compatible with skateboard-user-be's
+# /me/preferences, which this service takes over: same NotificationPreferences
+# shape, same FUNC_USER_SELF_READ/FUNC_USER_SELF_UPDATE authorities. That is
+# what lets skateboard-ui-backend re-point the route without the frontend
+# changing at all.
+
+openapi: "3.0.3"
+info:
+  title: Skateboard Notification Api
+  version: "1.0.0"
+
+tags:
+  - name: devices
+    description: Push device registration for the currently authenticated user
+  - name: preferences
+    description: Notification preferences for the currently authenticated user
+
+paths:
+
+  /devices/{deviceIdentifier}:
+    put:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Register or update the caller's push device
+      description: >
+        Idempotent per (user, deviceIdentifier): calling it repeatedly with the
+        same push token only refreshes lastSeenAt. userId and tenantId are taken
+        from the JWT (sub and the tenant_id claim) and are never read from the
+        request — a client cannot register a device against someone else.
+        Registering a push token that is already held by a *different* user
+        disables that other registration, which is what stops notifications for
+        the previous account arriving on a shared handset.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_NOTIFICATION_DEVICE_MANAGE
+      parameters:
+        - name: deviceIdentifier
+          in: path
+          required: true
+          description: Stable per-install identifier chosen by the client
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '200':
+          description: Device registered or updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [devices]
+      operationId: removeDevice
+      summary: Stop sending push to the caller's device
+      description: >
+        Marks the device disabled rather than deleting the row, so delivery
+        history stays intact. Idempotent — removing an unknown or
+        already-disabled device still returns 204, because the client calls this
+        on logout and must not fail a sign-out over it.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_NOTIFICATION_DEVICE_MANAGE
+      parameters:
+        - name: deviceIdentifier
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '204':
+          description: Device disabled
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /preferences:
+    get:
+      tags: [preferences]
+      operationId: getNotificationPreferences
+      summary: Get the current user's notification preferences
+      description: >
+        A user with no stored preferences gets the defaults (everything enabled),
+        matching the DEFAULT true this contract had while skateboard-user-be
+        owned it. No row is written by a read.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_READ
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags: [preferences]
+      operationId: updateNotificationPreferences
+      summary: Partially update the current user's notification preferences
+      description: >
+        Null fields are left unchanged, matching the partial-update semantics
+        this contract already had.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_UPDATE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationPreferencesRequest'
+      responses:
+        '200':
+          description: Updated notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    RegisterDeviceRequest:
+      type: object
+      required: [platform, provider, pushToken]
+      properties:
+        platform:
+          type: string
+          enum: [IOS, ANDROID]
+        provider:
+          type: string
+          enum: [EXPO]
+          default: EXPO
+        pushToken:
+          type: string
+          maxLength: 500
+          description: Provider-issued token, e.g. ExponentPushToken[xxxx]
+        appVersion:
+          type: string
+          maxLength: 50
+          nullable: true
+        deviceName:
+          type: string
+          maxLength: 200
+          nullable: true
+
+    DeviceResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        deviceIdentifier:
+          type: string
+        platform:
+          type: string
+          enum: [IOS, ANDROID]
+        provider:
+          type: string
+          enum: [EXPO]
+        appVersion:
+          type: string
+          nullable: true
+        deviceName:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        lastSeenAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      # pushToken is deliberately never returned: it is a delivery credential,
+      # and the client already knows the one it just sent.
+
+    # Field names are fixed by the contract skateboard-user-be already served
+    # and the mobile Settings screen already consumes — do not rename them.
+    # pushEnabled is the master switch; newPodcastEnabled is the NEW_PODCAST
+    # type. Further types get further flags here.
+    NotificationPreferences:
+      type: object
+      properties:
+        pushEnabled:
+          type: boolean
+        newPodcastEnabled:
+          type: boolean
+
+    NotificationPreferencesResponse:
+      type: object
+      properties:
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdateNotificationPreferencesRequest:
+      type: object
+      required: [notifications]
+      properties:
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time

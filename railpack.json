@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "java",
+  "steps": {
+    "build": {
+      "commands": [
+        "chmod +x ./mvnw",
+        "./mvnw clean package -DskipTests",
+        "cp target/notification-0.0.1-SNAPSHOT.jar target/app.jar"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "java -jar target/app.jar"
+  }
+}

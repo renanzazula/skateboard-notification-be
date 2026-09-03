@@ -1,0 +1,90 @@
+server:
+  # 8080 is skateboard-podcast-be, 8081 is Expo/Metro, 8082 is
+  # skateboard-user-be, 8083 is skateboard-app-config-be, 8090 is
+  # skateboard-ui-backend, 8180 is Keycloak — pick a free port.
+  port: 8084
+
+spring:
+  application:
+    name: notification
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/skateboard}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+
+  jpa:
+    # Flyway owns the schema (db/migration); Hibernate only validates its matches.
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        # Underscored, and identical in every profile. The older services carry
+        # a hyphenated name here and an underscored one in application-railway.yml;
+        # that split is a trap (a hyphen forces quoted identifiers), not a
+        # convention to copy.
+        default_schema: skateboard_notification
+
+  flyway:
+    enabled: true
+    schemas: skateboard_notification
+    create-schemas: true
+
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        # Bounded exponential backoff (spec §25). default-requeue-rejected:
+        # false is what makes an exhausted retry dead-letter instead of
+        # looping forever on the same poison message.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 4
+          initial-interval: 2s
+          multiplier: 2
+          max-interval: 30s
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Keycloak realm issuer. "skateboard-podcast" is the one shared
+          # platform realm (../skateboard-infrastructure/.docker/keycloak/realm-export.json)
+          # despite its name — every backend service runs against it. The JWKS
+          # URI is derived from this rather than discovered, so boot doesn't
+          # block on Keycloak; see SecurityConfig.
+          issuer-uri: ${APP_SECURITY_OAUTH2_ISSUER_URI:http://localhost:8180/realms/skateboard-podcast}
+
+app:
+  security:
+    oauth2:
+      # Tokens must include this in their "aud" claim. Populated by the
+      # audience-notification-be protocol mapper on the two public clients.
+      audience: ${APP_SECURITY_OAUTH2_AUDIENCE:skateboard-notification-be}
+  tenancy:
+    # Every user shares this tenant today (no real multi-tenancy yet). Used
+    # when a token carries no tenant_id claim — the attribute is admin-managed
+    # in Keycloak, so older identities may not have one. Same property name
+    # skateboard-user-be already uses.
+    default-tenant-id: ${APP_TENANCY_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
+
+push:
+  expo:
+    base-url: ${EXPO_PUSH_BASE_URL:https://exp.host}
+    # Optional. Only required once "Enhanced Security for Push Notifications"
+    # is switched on for the Expo project; unauthenticated sends work without
+    # it. Never logged, never returned in a response.
+    access-token: ${EXPO_PUSH_ACCESS_TOKEN:}
+    connect-timeout-ms: ${EXPO_PUSH_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${EXPO_PUSH_READ_TIMEOUT_MS:10000}
+    # Expo's documented maximum messages per /push/send request.
+    batch-size: ${EXPO_PUSH_BATCH_SIZE:100}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%thread] %logger{36} - %msg%n"
