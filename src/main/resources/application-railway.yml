@@ -98,6 +98,11 @@ push:
     batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
     cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
 
+messaging:
+  dead-letter:
+    monitor-enabled: ${DLQ_MONITOR_ENABLED:true}
+    poll-cron: ${DLQ_POLL_CRON:0 */5 * * * *}
+
 retention:
   enabled: ${RETENTION_ENABLED:true}
   notification-ttl-days: ${RETENTION_NOTIFICATION_TTL_DAYS:90}

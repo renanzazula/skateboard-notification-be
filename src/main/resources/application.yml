@@ -99,6 +99,14 @@ push:
     batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
     cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
 
+messaging:
+  dead-letter:
+    # DeadLetterQueueMonitor watches notification.events.dlq depth (spec §26).
+    # A poll rather than a consumer, so failed messages stay put for a human
+    # to inspect and replay.
+    monitor-enabled: ${DLQ_MONITOR_ENABLED:true}
+    poll-cron: ${DLQ_POLL_CRON:0 */5 * * * *}
+
 retention:
   enabled: ${RETENTION_ENABLED:true}
   # A notification, and the user_notification + notification_delivery rows that
