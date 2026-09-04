@@ -9,8 +9,8 @@ import com.skateboard.notification.infrastructure.web.CorrelationIdFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.rabbit.support.ListenerExecutionFailedException;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
@@ -103,8 +103,8 @@ public class PodcastPublishedEventListener {
         }
     }
 
-    private org.springframework.amqp.AmqpRejectAndDontRequeueException dropped(String reason) {
+    private AmqpRejectAndDontRequeueException dropped(String reason) {
         log.error("Dead-lettering unprocessable event: {}", reason);
-        return new org.springframework.amqp.AmqpRejectAndDontRequeueException(reason);
+        return new AmqpRejectAndDontRequeueException(reason);
     }
 }

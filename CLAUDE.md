@@ -31,7 +31,12 @@ generates `DevicesApi`, `PreferencesApi` and the request/response DTOs from it a
   identifiers — do not copy that.
 - `mvn test` — the unit tests need nothing. `NotificationPersistenceIntegrationTest` and
   `PodcastPublishedIntegrationTest` need a Docker daemon for Testcontainers (Postgres 16, RabbitMQ 4),
-  the same as the integration tests in `skateboard-podcast-be` and `skateboard-user-be`.
+  the same as the integration tests in `skateboard-podcast-be` and `skateboard-user-be`. Both set
+  `push.retry.enabled=false`: the retry pass is scheduled, and left on it fires mid-test and re-sends
+  deliveries the assertions are counting.
+- Two scheduled/tunable knobs live under `push.*` in `application.yml`: `push.expo.*` (base URL,
+  optional access token, timeouts, batch size) and `push.retry.*` (attempt budget, backoff, batch
+  limit, cron). Both have working defaults, so neither needs setting on Railway.
 
 ## Architecture
 
@@ -40,14 +45,21 @@ adapter/in/rest         → NotificationDeviceController, NotificationPreference
                           (implement the generated interfaces; @PreAuthorize mirrors
                           x-required-permissions in api/openapi.yaml)
 adapter/in/messaging    → PodcastPublishedEventListener (@RabbitListener) + events/ records
+adapter/in/scheduler    → PendingDeliveryRetryJob — triggers only, no logic, matching
+                          skateboard-podcast-be's YoutubeSyncJob
 adapter/out/persistence → *JpaEntity, Spring*Repository, and the @Component adapters that
                           implement the outbound ports and own domain↔entity mapping
 adapter/out/push/expo   → ExpoPushNotificationProvider — the only class that knows Expo exists
-application/port/in     → one interface per use case, each with nested Input/Result records
+application/port/in     → one interface per use case, each with nested Input/Result records.
+                          Dispatch and recording are deliberately NOT ports: nothing outside
+                          drives them, and a port nobody adapts is just indirection
 application/port/out    → DeviceRepositoryPort, PreferenceRepositoryPort, NotificationRepositoryPort,
                           DeliveryRepositoryPort, ProcessedEventPort, PushNotificationProviderPort
-application/service     → one @Service per use case, plus DispatchNotificationService and
-                          NotificationTemplateResolver
+application/service     → one @Service per use case, plus the three that split handling an event:
+                          NotificationRecorder (the transaction), DispatchNotificationService
+                          (the provider call, outside it) and RetryPendingDeliveriesService
+                          (what is still owed), passing PreparedDispatch between them.
+                          NotificationTemplateResolver owns the copy
 domain/model            → NotificationDevice, NotificationPreferences, Notification, UserNotification,
                           NotificationDelivery + the enums. No framework annotations here.
 infrastructure/         → messaging (topology), push (config), security, web

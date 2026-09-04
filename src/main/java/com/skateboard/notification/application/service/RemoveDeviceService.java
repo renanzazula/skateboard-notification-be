@@ -2,7 +2,6 @@ package com.skateboard.notification.application.service;
 
 import com.skateboard.notification.application.port.in.RemoveDeviceUseCase;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
-import com.skateboard.notification.domain.model.NotificationDevice;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

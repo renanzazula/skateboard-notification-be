@@ -35,7 +35,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.security.oauth2.resourceserver.jwt.issuer-uri=http://localhost:0/realms/test",
         "app.security.oauth2.audience=skateboard-notification-be",
-        "spring.rabbitmq.listener.simple.auto-startup=false"
+        "spring.rabbitmq.listener.simple.auto-startup=false",
+        "push.retry.enabled=false"
 })
 @Testcontainers
 class NotificationPersistenceIntegrationTest {

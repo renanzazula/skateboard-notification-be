@@ -3,6 +3,7 @@ package com.skateboard.notification.application.service;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
 import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
+import com.skateboard.notification.domain.model.DeliveryStatus;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDelivery;
 import com.skateboard.notification.domain.model.NotificationDevice;
@@ -129,7 +130,7 @@ public class RetryPendingDeliveriesService {
         deliveries.stream()
                 .filter(delivery -> !delivery.hasAttemptsLeft(properties.maxAttempts()))
                 .forEach(delivery -> {
-                    if (delivery.getStatus() == com.skateboard.notification.domain.model.DeliveryStatus.PENDING) {
+                    if (delivery.getStatus() == DeliveryStatus.PENDING) {
                         delivery.markFailed("Giving up after " + delivery.getAttemptCount() + " attempts");
                         deliveryRepositoryPort.save(delivery);
                     }
