@@ -37,4 +37,7 @@ public interface SpringNotificationDeliveryRepository
     List<NotificationDeliveryJpaEntity> lockRetryable(@Param("maxAttempts") int maxAttempts,
                                                        @Param("notAttemptedSince") Instant notAttemptedSince,
                                                        @Param("maxRows") int maxRows);
+
+    /** Served by {@code idx_notification_delivery_status}. Backs the pending-backlog gauge. */
+    long countByStatus(String status);
 }

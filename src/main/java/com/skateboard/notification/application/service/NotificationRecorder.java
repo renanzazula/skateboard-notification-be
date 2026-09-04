@@ -2,6 +2,7 @@ package com.skateboard.notification.application.service;
 
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.NotificationMetricsPort;
 import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
 import com.skateboard.notification.application.port.out.ProcessedEventPort;
 import com.skateboard.notification.domain.model.Notification;
@@ -43,15 +44,18 @@ public class NotificationRecorder {
     private final NotificationRepositoryPort notificationRepositoryPort;
     private final DeviceRepositoryPort deviceRepositoryPort;
     private final DeliveryRepositoryPort deliveryRepositoryPort;
+    private final NotificationMetricsPort metricsPort;
 
     public NotificationRecorder(ProcessedEventPort processedEventPort,
                                  NotificationRepositoryPort notificationRepositoryPort,
                                  DeviceRepositoryPort deviceRepositoryPort,
-                                 DeliveryRepositoryPort deliveryRepositoryPort) {
+                                 DeliveryRepositoryPort deliveryRepositoryPort,
+                                 NotificationMetricsPort metricsPort) {
         this.processedEventPort = processedEventPort;
         this.notificationRepositoryPort = notificationRepositoryPort;
         this.deviceRepositoryPort = deviceRepositoryPort;
         this.deliveryRepositoryPort = deliveryRepositoryPort;
+        this.metricsPort = metricsPort;
     }
 
     /**
@@ -62,8 +66,10 @@ public class NotificationRecorder {
     public Optional<PreparedDispatch> record(UUID eventId, String eventType, Notification draft) {
         if (!processedEventPort.claim(eventId, eventType)) {
             log.info("eventId={} already processed; ignoring redelivery", eventId);
+            metricsPort.eventIgnoredAsDuplicate(eventType);
             return Optional.empty();
         }
+        metricsPort.eventProcessed(eventType);
 
         Notification notification = notificationRepositoryPort.save(draft);
 

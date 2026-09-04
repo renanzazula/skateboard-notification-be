@@ -29,6 +29,12 @@ generates `DevicesApi`, `PreferencesApi` and the request/response DTOs from it a
   `skateboard` database. The schema name is **underscored in every profile**; podcast-be and user-be
   disagree with themselves between `application.yml` and `application-railway.yml`, which forces quoted
   identifiers — do not copy that.
+- The schema is pinned **twice**, and both are load-bearing: `spring.jpa.properties.hibernate.default_schema`
+  covers JPQL and entity mapping, `spring.datasource.hikari.schema` sets the connection `search_path` for
+  the four native `@Query` statements (`findNotifiableDevices`, `lockRetryable`, and the two retention
+  deletes) — Hibernate sends those to Postgres verbatim, so without the Hikari pin they fail `42P01
+  relation "notification_delivery" does not exist`. This service is the first here with native queries,
+  which is why podcast-be never needed it. Keep the two values identical.
 - `mvn test` — the unit tests need nothing. `NotificationPersistenceIntegrationTest` and
   `PodcastPublishedIntegrationTest` need a Docker daemon for Testcontainers (Postgres 16, RabbitMQ 4),
   the same as the integration tests in `skateboard-podcast-be` and `skateboard-user-be`. Both set

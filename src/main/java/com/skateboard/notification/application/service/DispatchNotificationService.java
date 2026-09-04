@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.NotificationMetricsPort;
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
 import com.skateboard.notification.application.port.out.PushResult;
@@ -42,15 +43,18 @@ public class DispatchNotificationService {
     private final DeviceRepositoryPort deviceRepositoryPort;
     private final DeliveryRepositoryPort deliveryRepositoryPort;
     private final PushNotificationProviderPort pushNotificationProviderPort;
+    private final NotificationMetricsPort metricsPort;
     private final ObjectMapper objectMapper;
 
     public DispatchNotificationService(DeviceRepositoryPort deviceRepositoryPort,
                                         DeliveryRepositoryPort deliveryRepositoryPort,
                                         PushNotificationProviderPort pushNotificationProviderPort,
+                                        NotificationMetricsPort metricsPort,
                                         ObjectMapper objectMapper) {
         this.deviceRepositoryPort = deviceRepositoryPort;
         this.deliveryRepositoryPort = deliveryRepositoryPort;
         this.pushNotificationProviderPort = pushNotificationProviderPort;
+        this.metricsPort = metricsPort;
         this.objectMapper = objectMapper;
     }
 
@@ -129,6 +133,8 @@ public class DispatchNotificationService {
         // dispatch loaded: that snapshot predates the send, and re-saving it
         // would revert a device the owner re-registered in the meantime.
         toDisable.forEach(device -> deviceRepositoryPort.disableById(device.getId()));
+
+        metricsPort.recordDeliveryOutcomes(notification.getType(), sent, retryable, failed, invalidTokens);
 
         log.info("notificationId={} type={} tenantId={} devices={} sent={} retryable={} failed={} invalidTokens={}",
                 notification.getId(), notification.getType(), notification.getTenantId(),

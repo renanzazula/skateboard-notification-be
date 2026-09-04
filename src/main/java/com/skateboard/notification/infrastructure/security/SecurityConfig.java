@@ -57,7 +57,11 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health").permitAll()
+                        // health for the platform's liveness probe; prometheus
+                        // so a scraper can be pointed here without a token dance.
+                        // Both expose counts and status only — no push tokens,
+                        // no PII (see NotificationMetrics).
+                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(o -> o.jwt(jwt -> jwt
                         .decoder(jwtDecoder())
