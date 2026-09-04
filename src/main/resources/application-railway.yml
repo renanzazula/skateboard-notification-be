@@ -103,6 +103,17 @@ push:
     batch-limit: ${PUSH_RETRY_BATCH_LIMIT:100}
     cron: ${PUSH_RETRY_CRON:0 */2 * * * *}
 
+  receipts:
+    enabled: ${PUSH_RECEIPTS_ENABLED:true}
+    # Receipts do not exist the instant a message is accepted; asking too early
+    # just returns NOT_READY and burns a request.
+    min-age-seconds: ${PUSH_RECEIPTS_MIN_AGE_SECONDS:900}
+    # Expo discards receipts after roughly a day. Past this the answer will
+    # never come, so stop asking rather than re-reading the row every pass.
+    max-age-hours: ${PUSH_RECEIPTS_MAX_AGE_HOURS:24}
+    batch-limit: ${PUSH_RECEIPTS_BATCH_LIMIT:100}
+    cron: ${PUSH_RECEIPTS_CRON:0 */15 * * * *}
+
 messaging:
   dead-letter:
     monitor-enabled: ${DLQ_MONITOR_ENABLED:true}

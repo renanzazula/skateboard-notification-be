@@ -40,4 +40,25 @@ public interface SpringNotificationDeliveryRepository
 
     /** Served by {@code idx_notification_delivery_status}. Backs the pending-backlog gauge. */
     long countByStatus(String status);
+
+    /**
+     * Accepted-but-unconfirmed deliveries, oldest first.
+     *
+     * <p>No row lock here, unlike the retry claim: reading a receipt has no
+     * external side effect, so two instances doing it concurrently is wasteful
+     * at worst, never a double send. The status transition it drives is
+     * idempotent.
+     */
+    @Query(value = """
+            SELECT d.* FROM notification_delivery d
+            WHERE d.status = 'SENT'
+              AND d.provider_message_id IS NOT NULL
+              AND d.last_attempt_at > :sentAfter
+              AND d.last_attempt_at < :sentBefore
+            ORDER BY d.last_attempt_at, d.id
+            LIMIT :maxRows
+            """, nativeQuery = true)
+    List<NotificationDeliveryJpaEntity> findAwaitingReceipt(@Param("sentAfter") Instant sentAfter,
+                                                             @Param("sentBefore") Instant sentBefore,
+                                                             @Param("maxRows") int maxRows);
 }

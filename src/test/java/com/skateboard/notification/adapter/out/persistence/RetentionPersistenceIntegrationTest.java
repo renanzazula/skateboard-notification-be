@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         // fire mid-assertion, mutate the rows under it, and — for the retry pass,
         // which has no fake provider here — would reach out to the real Expo API.
         "push.retry.enabled=false",
+        "push.receipts.enabled=false",
         "retention.enabled=false",
         "messaging.dead-letter.monitor-enabled=false"
 })

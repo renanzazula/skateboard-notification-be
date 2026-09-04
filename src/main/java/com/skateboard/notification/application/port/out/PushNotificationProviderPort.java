@@ -20,4 +20,15 @@ public interface PushNotificationProviderPort {
      * per request rather than per message.
      */
     List<PushResult> send(List<PushMessage> messages);
+
+    /**
+     * Asks what became of messages the provider accepted earlier.
+     *
+     * <p>Separate from {@link #send} because acceptance is not delivery: a
+     * ticket only says the provider took the message. Implementations return
+     * one receipt per id, in any order, and use
+     * {@link PushReceipt.Outcome#NOT_READY} for ids the provider cannot answer
+     * for yet rather than guessing.
+     */
+    List<PushReceipt> fetchReceipts(List<String> providerMessageIds);
 }

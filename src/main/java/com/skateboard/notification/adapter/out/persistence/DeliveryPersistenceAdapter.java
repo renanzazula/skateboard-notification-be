@@ -58,6 +58,11 @@ public class DeliveryPersistenceAdapter implements DeliveryRepositoryPort {
         return repository.countByStatus(DeliveryStatus.PENDING.name());
     }
 
+    @Override
+    public List<NotificationDelivery> findAwaitingReceipt(Instant sentAfter, Instant sentBefore, int limit) {
+        return toDomainAll(repository.findAwaitingReceipt(sentAfter, sentBefore, limit));
+    }
+
     private List<NotificationDelivery> toDomainAll(List<NotificationDeliveryJpaEntity> entities) {
         return entities.stream().map(this::toDomain).toList();
     }

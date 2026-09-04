@@ -2,6 +2,7 @@ package com.skateboard.notification.adapter.out.push.expo;
 
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
+import com.skateboard.notification.application.port.out.PushReceipt;
 import com.skateboard.notification.application.port.out.PushResult;
 import com.skateboard.notification.domain.model.PushProvider;
 import com.skateboard.notification.infrastructure.push.ExpoProperties;
@@ -43,6 +44,7 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
     private static final Logger log = LoggerFactory.getLogger(ExpoPushNotificationProvider.class);
 
     private static final String SEND_PATH = "/--/api/v2/push/send";
+    private static final String RECEIPTS_PATH = "/--/api/v2/push/getReceipts";
 
     /** Expo's documented maximum messages per /push/send request. */
     private static final int MAX_BATCH_SIZE = 100;
@@ -102,6 +104,66 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
             results.addAll(sendBatch(batch));
         }
         return results;
+    }
+
+    @Override
+    public List<PushReceipt> fetchReceipts(List<String> providerMessageIds) {
+        List<PushReceipt> receipts = new ArrayList<>(providerMessageIds.size());
+        for (int start = 0; start < providerMessageIds.size(); start += batchSize) {
+            List<String> batch = providerMessageIds.subList(
+                    start, Math.min(start + batchSize, providerMessageIds.size()));
+            receipts.addAll(fetchReceiptBatch(batch));
+        }
+        return receipts;
+    }
+
+    /**
+     * A failure to read receipts is never a delivery failure — nothing has
+     * changed about the message, we simply do not know yet. Every id in a batch
+     * we could not read comes back NOT_READY so the next pass asks again.
+     */
+    private List<PushReceipt> fetchReceiptBatch(List<String> ids) {
+        try {
+            ExpoReceiptResponse response = webClient.post()
+                    .uri(RECEIPTS_PATH)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of("ids", ids))
+                    .retrieve()
+                    .bodyToMono(ExpoReceiptResponse.class)
+                    .block();
+            return interpretReceipts(ids, response);
+        } catch (RuntimeException e) {
+            log.warn("Could not read Expo receipts for {} message(s); will ask again", ids.size(), e);
+            return ids.stream().map(PushReceipt::notReady).toList();
+        }
+    }
+
+    private List<PushReceipt> interpretReceipts(List<String> ids, ExpoReceiptResponse response) {
+        Map<String, ExpoPushTicket> byId = response == null || response.data() == null
+                ? Map.of()
+                : response.data();
+
+        List<PushReceipt> receipts = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            ExpoPushTicket receipt = byId.get(id);
+            // Absent means Expo has not produced a receipt yet. Treating that
+            // as a failure would retire a delivery that is still in flight.
+            if (receipt == null) {
+                receipts.add(PushReceipt.notReady(id));
+                continue;
+            }
+            if (ExpoPushTicket.STATUS_OK.equalsIgnoreCase(receipt.status())) {
+                receipts.add(PushReceipt.delivered(id));
+                continue;
+            }
+            String errorCode = receipt.errorCode();
+            String detail = errorCode == null ? receipt.message() : errorCode + ": " + receipt.message();
+            // The failure Expo only ever reports here, never at send time.
+            receipts.add(ERROR_DEVICE_NOT_REGISTERED.equals(errorCode)
+                    ? PushReceipt.invalidToken(id, detail)
+                    : PushReceipt.failed(id, detail));
+        }
+        return receipts;
     }
 
     private List<PushResult> sendBatch(List<PushMessage> batch) {

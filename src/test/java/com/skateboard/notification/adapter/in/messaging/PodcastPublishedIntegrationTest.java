@@ -6,6 +6,7 @@ import com.skateboard.notification.adapter.out.persistence.SpringUserNotificatio
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
 import com.skateboard.notification.application.port.out.PushMessage;
 import com.skateboard.notification.application.port.out.PushNotificationProviderPort;
+import com.skateboard.notification.application.port.out.PushReceipt;
 import com.skateboard.notification.application.port.out.PushResult;
 import com.skateboard.notification.domain.model.DevicePlatform;
 import com.skateboard.notification.domain.model.NotificationDevice;
@@ -54,6 +55,7 @@ import static org.awaitility.Awaitility.await;
         // fire mid-assertion, mutate the rows under it, and — for the retry pass,
         // which has no fake provider here — would reach out to the real Expo API.
         "push.retry.enabled=false",
+        "push.receipts.enabled=false",
         "retention.enabled=false",
         "messaging.dead-letter.monitor-enabled=false"
 })
@@ -81,6 +83,14 @@ class PodcastPublishedIntegrationTest {
         @Override
         public PushProvider provider() {
             return PushProvider.EXPO;
+        }
+
+        @Override
+        public List<PushReceipt> fetchReceipts(List<String> providerMessageIds) {
+            // Never exercised here — the receipt job is disabled for this test —
+            // but a fake that claimed delivery would quietly settle rows the
+            // assertions expect to still be SENT.
+            return providerMessageIds.stream().map(PushReceipt::notReady).toList();
         }
 
         @Override

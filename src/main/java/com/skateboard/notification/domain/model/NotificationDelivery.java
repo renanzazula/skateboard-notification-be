@@ -88,6 +88,17 @@ public class NotificationDelivery {
     }
 
     /**
+     * The provider confirmed it reached the platform's push service. The
+     * strongest thing we can ever know, and still not proof anyone read it —
+     * that remains {@code user_notification.read_at}.
+     */
+    public void markDelivered() {
+        this.status = DeliveryStatus.DELIVERED;
+        this.failureReason = null;
+        touch();
+    }
+
+    /**
      * A failure worth another go later — a timeout, a 5xx, rate limiting. The
      * row stays PENDING so a retry pass can pick it up; only the attempt
      * counter moves.

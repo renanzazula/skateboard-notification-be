@@ -38,8 +38,8 @@ generates `DevicesApi`, `PreferencesApi` and the request/response DTOs from it a
 - `mvn test` — the unit tests need nothing. `NotificationPersistenceIntegrationTest` and
   `PodcastPublishedIntegrationTest` need a Docker daemon for Testcontainers (Postgres 16, RabbitMQ 4),
   the same as the integration tests in `skateboard-podcast-be` and `skateboard-user-be`. Every
-  integration test disables the three default-on background jobs (`push.retry.enabled`,
-  `retention.enabled`, `messaging.dead-letter.monitor-enabled`): they fire mid-assertion and mutate
+  integration test disables the four default-on background jobs (`push.retry.enabled`,
+  `push.receipts.enabled`, `retention.enabled`, `messaging.dead-letter.monitor-enabled`): they fire mid-assertion and mutate
   the rows under it, and the retry pass in a context with no fake push provider would call the real
   Expo API.
 - Two scheduled/tunable knobs live under `push.*` in `application.yml`: `push.expo.*` (base URL,
@@ -53,8 +53,9 @@ adapter/in/rest         → NotificationDeviceController, NotificationPreference
                           (implement the generated interfaces; @PreAuthorize mirrors
                           x-required-permissions in api/openapi.yaml)
 adapter/in/messaging    → PodcastPublishedEventListener (@RabbitListener) + events/ records
-adapter/in/scheduler    → PendingDeliveryRetryJob, DataRetentionJob — triggers only, no
-                          logic, matching skateboard-podcast-be's YoutubeSyncJob
+adapter/in/scheduler    → PendingDeliveryRetryJob, DeliveryReceiptPollJob, DataRetentionJob
+                          — triggers only, no logic, matching skateboard-podcast-be's
+                          YoutubeSyncJob
 adapter/out/persistence → *JpaEntity, Spring*Repository, and the @Component adapters that
                           implement the outbound ports and own domain↔entity mapping
 adapter/out/push/expo   → ExpoPushNotificationProvider — the only class that knows Expo exists
@@ -121,6 +122,13 @@ infrastructure/         → messaging (topology), push (config), security, web
   `FOR UPDATE SKIP LOCKED` — no scheduler lock needed, and two instances share a backlog instead of
   duplicating it. Attempts are counted at `beginAttempt()`, *before* the provider call, so a sender
   that keeps dying mid-flight still exhausts its budget instead of retrying forever.
+- **Acceptance is not delivery, which is why `PollDeliveryReceiptsService` exists.** A ticket only
+  says Expo took the message. Expo reports some failures *only* in the receipt — `DeviceNotRegistered`
+  among them — so without a receipt pass a token that died after registration is never noticed, stays
+  enabled, and wastes a message on every notification from then on. It is also the only thing that
+  ever sets `DELIVERED`. A receipt that is not ready yet is not a failure: the row stays `SENT` and is
+  asked about again until it ages out of Expo's ~24h retention window. No scheduler lock — reading a
+  receipt has no external side effect and the transitions are idempotent.
 - **A stable event id prevents duplicates; it does not by itself recover losses.** podcast-be sets
   `notified_at` on broker confirm, so it will not re-emit for a post the consumer then failed on.
   Recovery on this side comes from the transaction boundary above and from the retry pass — not from

@@ -25,6 +25,17 @@ public interface DeliveryRepositoryPort {
     List<NotificationDelivery> claimRetryable(int maxAttempts, Instant notAttemptedSince, int limit);
 
     /**
+     * Deliveries the provider accepted but has not been asked about yet.
+     *
+     * <p>Bounded at both ends. {@code sentBefore} leaves a message time to
+     * actually be delivered before we ask; {@code sentAfter} stops the poll
+     * chasing rows the provider no longer keeps receipts for — Expo discards
+     * them after about a day — which would otherwise be re-read every pass
+     * forever.
+     */
+    List<NotificationDelivery> findAwaitingReceipt(Instant sentAfter, Instant sentBefore, int limit);
+
+    /**
      * How many deliveries are still owed a send. Backs the
      * {@code notification_deliveries_pending} gauge — the first number to look
      * at when asking whether the retry pass is keeping up.
