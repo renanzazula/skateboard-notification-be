@@ -30,7 +30,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.security.oauth2.resourceserver.jwt.issuer-uri=http://localhost:0/realms/test",
         "app.security.oauth2.audience=skateboard-notification-be",
-        "spring.rabbitmq.listener.simple.auto-startup=false"
+        "spring.rabbitmq.listener.simple.auto-startup=false",
+        // Background jobs are all default-on. Left running inside a test they
+        // fire mid-assertion, mutate the rows under it, and — for the retry pass,
+        // which has no fake provider here — would reach out to the real Expo API.
+        "push.retry.enabled=false",
+        "retention.enabled=false",
+        "messaging.dead-letter.monitor-enabled=false"
 })
 @Testcontainers
 class RetentionPersistenceIntegrationTest {

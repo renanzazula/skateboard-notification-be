@@ -1,3 +1,7 @@
+-- Numbered V4 rather than V3: retention landed on main first and took that
+-- version. Two migrations sharing a version is not a merge conflict git can
+-- see — it is a startup failure, since Flyway refuses to resolve them.
+--
 -- Supports the retry poll in SpringNotificationDeliveryRepository.lockRetryable,
 -- which runs every couple of minutes for the life of the service.
 --

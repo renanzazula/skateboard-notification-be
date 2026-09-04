@@ -50,9 +50,12 @@ import static org.awaitility.Awaitility.await;
 @SpringBootTest(properties = {
         "spring.security.oauth2.resourceserver.jwt.issuer-uri=http://localhost:0/realms/test",
         "app.security.oauth2.audience=skateboard-notification-be",
-        // The retry pass is scheduled, so left on it would fire mid-test and
-        // re-send deliveries these assertions are counting.
-        "push.retry.enabled=false"
+        // Background jobs are all default-on. Left running inside a test they
+        // fire mid-assertion, mutate the rows under it, and — for the retry pass,
+        // which has no fake provider here — would reach out to the real Expo API.
+        "push.retry.enabled=false",
+        "retention.enabled=false",
+        "messaging.dead-letter.monitor-enabled=false"
 })
 @Testcontainers
 class PodcastPublishedIntegrationTest {
