@@ -42,9 +42,10 @@ generates `DevicesApi`, `PreferencesApi` and the request/response DTOs from it a
   `push.receipts.enabled`, `retention.enabled`, `messaging.dead-letter.monitor-enabled`): they fire mid-assertion and mutate
   the rows under it, and the retry pass in a context with no fake push provider would call the real
   Expo API.
-- Two scheduled/tunable knobs live under `push.*` in `application.yml`: `push.expo.*` (base URL,
-  optional access token, timeouts, batch size) and `push.retry.*` (attempt budget, backoff, batch
-  limit, cron). Both have working defaults, so neither needs setting on Railway.
+- Three scheduled/tunable knobs live under `push.*` in `application.yml`: `push.expo.*` (base URL,
+  optional access token, timeouts, batch size), `push.retry.*` (attempt budget, backoff, batch
+  limit, cron) and `push.receipts.*` (min/max age window, batch limit, cron). All have working
+  defaults, so none needs setting on Railway.
 
 ## Architecture
 
@@ -63,7 +64,8 @@ application/port/in     → one interface per use case, each with nested Input/R
                           Dispatch and recording are deliberately NOT ports: nothing outside
                           drives them, and a port nobody adapts is just indirection
 application/port/out    → DeviceRepositoryPort, PreferenceRepositoryPort, NotificationRepositoryPort,
-                          DeliveryRepositoryPort, ProcessedEventPort, PushNotificationProviderPort
+                          DeliveryRepositoryPort, ProcessedEventPort, PushNotificationProviderPort,
+                          NotificationMetricsPort, RetentionRepositoryPort
 application/service     → one @Service per use case, plus the three that split handling an event:
                           NotificationRecorder (the transaction), DispatchNotificationService
                           (the provider call, outside it) and RetryPendingDeliveriesService
@@ -71,7 +73,8 @@ application/service     → one @Service per use case, plus the three that split
                           NotificationTemplateResolver owns the copy
 domain/model            → NotificationDevice, NotificationPreferences, Notification, UserNotification,
                           NotificationDelivery + the enums. No framework annotations here.
-infrastructure/         → messaging (topology), push (config), security, web
+infrastructure/         → messaging (topology, incl. DeadLetterQueueMonitor), metrics (Micrometer),
+                          push (config), retention (config), security, web
 ```
 
 ### Five tables, kept apart deliberately
