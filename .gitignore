@@ -31,3 +31,5 @@ target/
 
 *.iml
 .docs
+
+graphify-out/
