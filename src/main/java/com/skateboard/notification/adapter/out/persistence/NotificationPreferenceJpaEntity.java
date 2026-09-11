@@ -34,6 +34,7 @@ public class NotificationPreferenceJpaEntity {
     private Instant updatedAt;
 
     public NotificationPreferenceJpaEntity() {
+        // required by JPA
     }
 
     public UUID getId()                { return id; }

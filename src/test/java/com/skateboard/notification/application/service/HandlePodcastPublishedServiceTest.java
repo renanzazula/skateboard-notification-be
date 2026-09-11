@@ -81,7 +81,7 @@ class HandlePodcastPublishedServiceTest {
      */
     @Test
     void aRedeliveredEventSendsNothing() {
-        when(notificationRecorder.record(any(), anyString(), any())).thenReturn(Optional.empty());
+        when(notificationRecorder.recordEvent(any(), anyString(), any())).thenReturn(Optional.empty());
 
         HandlePodcastPublishedUseCase.Result result = service.execute(input());
 
@@ -101,19 +101,19 @@ class HandlePodcastPublishedServiceTest {
         service.execute(input());
 
         var inOrder = org.mockito.Mockito.inOrder(notificationRecorder, dispatchNotificationService);
-        inOrder.verify(notificationRecorder).record(eq(EVENT), eq("PODCAST_PUBLISHED"), any());
+        inOrder.verify(notificationRecorder).recordEvent(eq(EVENT), eq("PODCAST_PUBLISHED"), any());
         inOrder.verify(dispatchNotificationService).send(any());
     }
 
     private void recorderAccepts() {
-        when(notificationRecorder.record(any(), anyString(), any())).thenAnswer(invocation ->
+        when(notificationRecorder.recordEvent(any(), anyString(), any())).thenAnswer(invocation ->
                 Optional.of(new PreparedDispatch(invocation.getArgument(2), java.util.List.of(),
                         java.util.List.of())));
     }
 
     private Notification capturedDraft() {
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(notificationRecorder).record(any(), anyString(), captor.capture());
+        verify(notificationRecorder).recordEvent(any(), anyString(), captor.capture());
         return captor.getValue();
     }
 

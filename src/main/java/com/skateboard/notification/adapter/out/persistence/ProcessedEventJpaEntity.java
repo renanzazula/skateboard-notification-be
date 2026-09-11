@@ -23,6 +23,7 @@ public class ProcessedEventJpaEntity {
     private Instant processedAt;
 
     public ProcessedEventJpaEntity() {
+        // required by JPA
     }
 
     public UUID getEventId()        { return eventId; }

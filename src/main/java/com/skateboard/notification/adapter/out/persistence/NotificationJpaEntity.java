@@ -43,6 +43,7 @@ public class NotificationJpaEntity {
     private Instant createdAt;
 
     public NotificationJpaEntity() {
+        // required by JPA
     }
 
     public UUID getId()              { return id; }

@@ -29,6 +29,7 @@ public class NotificationChannelSettingJpaEntity {
     private Instant updatedAt;
 
     public NotificationChannelSettingJpaEntity() {
+        // required by JPA
     }
 
     public UUID getUserId()        { return userId; }

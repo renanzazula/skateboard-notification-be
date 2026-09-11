@@ -63,7 +63,7 @@ public class NotificationRecorder {
      *         — in which case the caller must do nothing at all
      */
     @Transactional
-    public Optional<PreparedDispatch> record(UUID eventId, String eventType, Notification draft) {
+    public Optional<PreparedDispatch> recordEvent(UUID eventId, String eventType, Notification draft) {
         if (!processedEventPort.claim(eventId, eventType)) {
             log.info("eventId={} already processed; ignoring redelivery", eventId);
             metricsPort.eventIgnoredAsDuplicate(eventType);

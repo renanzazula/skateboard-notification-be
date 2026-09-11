@@ -72,7 +72,7 @@ public class HandlePodcastPublishedService implements HandlePodcastPublishedUseC
                 buildData(input));
 
         Optional<PreparedDispatch> prepared =
-                notificationRecorder.record(input.eventId(), EVENT_TYPE, draft);
+                notificationRecorder.recordEvent(input.eventId(), EVENT_TYPE, draft);
 
         if (prepared.isEmpty()) {
             return Result.duplicate();

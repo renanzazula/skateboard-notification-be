@@ -184,8 +184,9 @@ class DispatchNotificationServiceTest {
     @Test
     void refusesAPreparedDispatchWhoseListsDoNotLineUp() {
         Notification notification = notification();
+        List<NotificationDevice> devices = List.of(device(USER_A, "a-phone"));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> new PreparedDispatch(
-                        notification, List.of(device(USER_A, "a-phone")), List.of()))
+                        notification, devices, List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

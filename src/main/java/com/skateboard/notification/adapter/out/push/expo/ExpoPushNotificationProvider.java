@@ -84,7 +84,7 @@ public class ExpoPushNotificationProvider implements PushNotificationProviderPor
      * corrected and reported rather than fatal.
      */
     private int clampBatchSize(int configured) {
-        int clamped = Math.max(1, Math.min(configured, MAX_BATCH_SIZE));
+        int clamped = Math.clamp(configured, 1, MAX_BATCH_SIZE);
         if (clamped != configured) {
             log.warn("push.expo.batch-size {} is out of range; using {}", configured, clamped);
         }
