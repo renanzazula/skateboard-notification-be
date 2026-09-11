@@ -52,6 +52,7 @@ public class NotificationDeliveryJpaEntity {
     private Instant updatedAt;
 
     public NotificationDeliveryJpaEntity() {
+        // required by JPA
     }
 
     public UUID getId()                  { return id; }

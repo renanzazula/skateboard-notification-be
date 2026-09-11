@@ -28,6 +28,7 @@ public class UserNotificationJpaEntity {
     private Instant createdAt;
 
     public UserNotificationJpaEntity() {
+        // required by JPA
     }
 
     public UUID getId()             { return id; }

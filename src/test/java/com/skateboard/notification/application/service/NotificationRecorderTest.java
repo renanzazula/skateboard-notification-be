@@ -67,7 +67,7 @@ class NotificationRecorderTest {
     void aRedeliveredEventWritesNothing() {
         when(processedEventPort.claim(EVENT, "PODCAST_PUBLISHED")).thenReturn(false);
 
-        assertThat(recorder.record(EVENT, "PODCAST_PUBLISHED", draft())).isEmpty();
+        assertThat(recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft())).isEmpty();
 
         verifyNoInteractions(notificationRepositoryPort);
         verifyNoInteractions(deviceRepositoryPort);
@@ -82,7 +82,7 @@ class NotificationRecorderTest {
         when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
                 .thenReturn(List.of(device(USER_A, "a-phone")));
 
-        recorder.record(EVENT, "PODCAST_PUBLISHED", draft());
+        recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft());
 
         InOrder inOrder = Mockito.inOrder(processedEventPort, notificationRepositoryPort);
         inOrder.verify(processedEventPort).claim(EVENT, "PODCAST_PUBLISHED");
@@ -101,7 +101,7 @@ class NotificationRecorderTest {
                 .thenReturn(List.of(device(USER_A, "a-phone"), device(USER_A, "a-tablet"),
                         device(USER_B, "b-phone")));
 
-        Optional<PreparedDispatch> prepared = recorder.record(EVENT, "PODCAST_PUBLISHED", draft());
+        Optional<PreparedDispatch> prepared = recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft());
 
         assertThat(prepared).isPresent();
         assertThat(prepared.get().deliveries()).hasSize(3);
@@ -124,7 +124,7 @@ class NotificationRecorderTest {
         when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
                 .thenReturn(List.of());
 
-        Optional<PreparedDispatch> prepared = recorder.record(EVENT, "PODCAST_PUBLISHED", draft());
+        Optional<PreparedDispatch> prepared = recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft());
 
         assertThat(prepared).isPresent();
         assertThat(prepared.get().isEmpty()).isTrue();
@@ -139,7 +139,7 @@ class NotificationRecorderTest {
         when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
                 .thenReturn(List.of(device(USER_A, "a-phone")));
 
-        PreparedDispatch prepared = recorder.record(EVENT, "PODCAST_PUBLISHED", draft()).orElseThrow();
+        PreparedDispatch prepared = recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft()).orElseThrow();
 
         assertThat(prepared.deliveries()).singleElement().satisfies(delivery -> {
             assertThat(delivery.getStatus())
