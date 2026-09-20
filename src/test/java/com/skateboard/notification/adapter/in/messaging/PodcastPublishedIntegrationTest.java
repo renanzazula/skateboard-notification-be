@@ -1,6 +1,7 @@
 package com.skateboard.notification.adapter.in.messaging;
 
 import com.skateboard.notification.adapter.out.persistence.SpringNotificationDeliveryRepository;
+import com.skateboard.notification.adapter.out.persistence.SpringNotificationDeviceRepository;
 import com.skateboard.notification.adapter.out.persistence.SpringNotificationRepository;
 import com.skateboard.notification.adapter.out.persistence.SpringUserNotificationRepository;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
@@ -120,6 +121,7 @@ class PodcastPublishedIntegrationTest {
     @Autowired private SpringNotificationRepository notificationRepository;
     @Autowired private SpringUserNotificationRepository userNotificationRepository;
     @Autowired private SpringNotificationDeliveryRepository deliveryRepository;
+    @Autowired private SpringNotificationDeviceRepository deviceRepository;
 
     @BeforeEach
     void setUp() {
@@ -127,6 +129,14 @@ class PodcastPublishedIntegrationTest {
         notificationRepository.deleteAll();
         deliveryRepository.deleteAll();
         userNotificationRepository.deleteAll();
+        // Devices are registered fresh by each test via registerDevice(), but
+        // the Spring context (and its Postgres container) is shared across
+        // test methods in this class. Left uncleaned, a device registered by
+        // an earlier test stays notifiable for this tenant and inflates the
+        // fan-out for every test that runs after it — exactly the kind of
+        // cross-test bleed that makes "devices=1" assumptions unreliable
+        // regardless of method execution order.
+        deviceRepository.deleteAll();
     }
 
     @Test
