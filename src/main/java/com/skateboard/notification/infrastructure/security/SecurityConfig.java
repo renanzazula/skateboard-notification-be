@@ -54,6 +54,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
+                // Safe to disable: this API is a stateless OAuth2 resource server
+                // (SessionCreationPolicy.STATELESS below) authenticated by a bearer
+                // JWT on every request, never by a session cookie — there is no
+                // ambient credential for a cross-site request to ride on.
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
