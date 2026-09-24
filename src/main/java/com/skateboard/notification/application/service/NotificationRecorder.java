@@ -76,10 +76,25 @@ public class NotificationRecorder {
         List<NotificationDevice> devices = deviceRepositoryPort
                 .findNotifiableDevices(notification.getTenantId(), notification.getType());
 
+        return Optional.of(recordDeliveries(notification, devices));
+    }
+
+    /**
+     * Records a notification addressed to devices the caller already chose,
+     * with no event behind it and so nothing to claim. Same single transaction
+     * as {@link #recordEvent}, so the PENDING rows the retry and receipt passes
+     * rely on exist before anything is sent.
+     */
+    @Transactional
+    public PreparedDispatch recordDirect(Notification draft, List<NotificationDevice> devices) {
+        return recordDeliveries(notificationRepositoryPort.save(draft), devices);
+    }
+
+    private PreparedDispatch recordDeliveries(Notification notification, List<NotificationDevice> devices) {
         if (devices.isEmpty()) {
             log.info("notificationId={} type={} tenantId={} matched no notifiable devices",
                     notification.getId(), notification.getType(), notification.getTenantId());
-            return Optional.of(new PreparedDispatch(notification, List.of(), List.of()));
+            return new PreparedDispatch(notification, List.of(), List.of());
         }
 
         recordRecipients(notification, devices);
@@ -88,7 +103,7 @@ public class NotificationRecorder {
                         device.getId(), device.getPushProvider()))
                 .toList());
 
-        return Optional.of(new PreparedDispatch(notification, devices, deliveries));
+        return new PreparedDispatch(notification, devices, deliveries);
     }
 
     /**

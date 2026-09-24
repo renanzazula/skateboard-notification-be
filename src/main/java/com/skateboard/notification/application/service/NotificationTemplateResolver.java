@@ -37,7 +37,9 @@ public class NotificationTemplateResolver {
 
     private static final Map<NotificationType, Definition> DEFINITIONS = Map.of(
             NotificationType.NEW_PODCAST,
-            new Definition("New podcast available", "{{title}}")
+            new Definition("New podcast available", "{{title}}"),
+            NotificationType.TEST_NOTIFICATION,
+            new Definition("Test notification", "Push notifications are working on this device.")
     );
 
     /**
