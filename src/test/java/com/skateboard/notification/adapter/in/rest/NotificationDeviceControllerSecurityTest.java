@@ -2,6 +2,7 @@ package com.skateboard.notification.adapter.in.rest;
 
 import com.skateboard.notification.application.port.in.RegisterDeviceUseCase;
 import com.skateboard.notification.application.port.in.RemoveDeviceUseCase;
+import com.skateboard.notification.application.port.in.SendTestNotificationUseCase;
 import com.skateboard.notification.domain.model.DevicePlatform;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.PushProvider;
@@ -29,7 +30,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -77,6 +80,7 @@ class NotificationDeviceControllerSecurityTest {
 
     @MockBean private RegisterDeviceUseCase registerDeviceUseCase;
     @MockBean private RemoveDeviceUseCase removeDeviceUseCase;
+    @MockBean private SendTestNotificationUseCase sendTestNotificationUseCase;
 
     @Test
     void rejectsRegistrationWithoutAToken() throws Exception {
@@ -142,5 +146,44 @@ class NotificationDeviceControllerSecurityTest {
                         .with(jwt().jwt(builder -> builder.subject(UUID.randomUUID().toString()))
                                 .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE")))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void rejectsATestNotificationWithoutAToken() throws Exception {
+        mockMvc.perform(post("/test-notification"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void rejectsATestNotificationWithoutTheDeviceAuthority() throws Exception {
+        mockMvc.perform(post("/test-notification")
+                        .with(jwt().authorities(() -> "FUNC_USER_SELF_READ")))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * The recipient is the JWT subject and nothing else — there is no request
+     * body or parameter through which a caller could address another user.
+     */
+    @Test
+    void sendsTheTestToTheCallerOnly() throws Exception {
+        UUID caller = UUID.randomUUID();
+        given(sendTestNotificationUseCase.execute(any()))
+                .willReturn(new SendTestNotificationUseCase.Result(2, 1, 0, 0, 1));
+
+        mockMvc.perform(post("/test-notification")
+                        .with(jwt().jwt(builder -> builder.subject(caller.toString()))
+                                .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.devicesTargeted").value(2))
+                .andExpect(jsonPath("$.sent").value(1))
+                .andExpect(jsonPath("$.invalidTokens").value(1));
+
+        ArgumentCaptor<SendTestNotificationUseCase.Input> captor =
+                ArgumentCaptor.forClass(SendTestNotificationUseCase.Input.class);
+        verify(sendTestNotificationUseCase).execute(captor.capture());
+        assertThat(captor.getValue().userId()).isEqualTo(caller);
+        assertThat(captor.getValue().tenantId())
+                .isEqualTo(UUID.fromString("00000000-0000-0000-0000-000000000001"));
     }
 }

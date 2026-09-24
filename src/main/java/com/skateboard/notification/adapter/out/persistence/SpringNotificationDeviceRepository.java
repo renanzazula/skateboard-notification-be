@@ -14,6 +14,9 @@ public interface SpringNotificationDeviceRepository extends JpaRepository<Notifi
 
     Optional<NotificationDeviceJpaEntity> findByUserIdAndDeviceIdentifier(UUID userId, String deviceIdentifier);
 
+    List<NotificationDeviceJpaEntity> findByTenantIdAndUserIdAndEnabledTrueOrderByCreatedAtAscIdAsc(
+            UUID tenantId, UUID userId);
+
     /**
      * Flips one column, so a dead token learned about after a send cannot
      * clobber a re-registration that happened while the send was in flight.

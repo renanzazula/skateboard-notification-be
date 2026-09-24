@@ -16,5 +16,10 @@ public enum NotificationType {
     COMMENT_REPLY,
     NEW_FOLLOWER,
     EVENT_REMINDER,
-    SYSTEM_NOTIFICATION
+    SYSTEM_NOTIFICATION,
+    /**
+     * A user checking that push reaches their own devices. Never fanned out
+     * and never subject to preferences — see SendTestNotificationService.
+     */
+    TEST_NOTIFICATION
 }

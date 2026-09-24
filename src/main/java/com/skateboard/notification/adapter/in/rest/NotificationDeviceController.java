@@ -2,6 +2,7 @@ package com.skateboard.notification.adapter.in.rest;
 
 import com.skateboard.notification.application.port.in.RegisterDeviceUseCase;
 import com.skateboard.notification.application.port.in.RemoveDeviceUseCase;
+import com.skateboard.notification.application.port.in.SendTestNotificationUseCase;
 import com.skateboard.notification.domain.model.DevicePlatform;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.PushProvider;
@@ -10,6 +11,7 @@ import com.skateboard.notification.infrastructure.security.CurrentUserProvider;
 import com.skateboard.notification.infrastructure.web.api.DevicesApi;
 import com.skateboard.notification.infrastructure.web.dto.DeviceResponse;
 import com.skateboard.notification.infrastructure.web.dto.RegisterDeviceRequest;
+import com.skateboard.notification.infrastructure.web.dto.TestNotificationResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,13 +33,16 @@ public class NotificationDeviceController implements DevicesApi {
 
     private final RegisterDeviceUseCase registerDeviceUseCase;
     private final RemoveDeviceUseCase removeDeviceUseCase;
+    private final SendTestNotificationUseCase sendTestNotificationUseCase;
     private final CurrentUserProvider currentUserProvider;
 
     public NotificationDeviceController(RegisterDeviceUseCase registerDeviceUseCase,
                                          RemoveDeviceUseCase removeDeviceUseCase,
+                                         SendTestNotificationUseCase sendTestNotificationUseCase,
                                          CurrentUserProvider currentUserProvider) {
         this.registerDeviceUseCase = registerDeviceUseCase;
         this.removeDeviceUseCase = removeDeviceUseCase;
+        this.sendTestNotificationUseCase = sendTestNotificationUseCase;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -63,6 +68,23 @@ public class NotificationDeviceController implements DevicesApi {
     public ResponseEntity<Void> removeDevice(String deviceIdentifier) {
         removeDeviceUseCase.execute(currentUserProvider.require().id(), deviceIdentifier);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Recipient is the caller and nobody else — the only input is the JWT.
+     */
+    @Override
+    @PreAuthorize(DEVICE_MANAGE)
+    public ResponseEntity<TestNotificationResponse> sendTestNotification() {
+        CurrentUser caller = currentUserProvider.require();
+        SendTestNotificationUseCase.Result result = sendTestNotificationUseCase.execute(
+                new SendTestNotificationUseCase.Input(caller.id(), caller.tenantId()));
+        return ResponseEntity.ok(new TestNotificationResponse()
+                .devicesTargeted(result.devicesTargeted())
+                .sent(result.sent())
+                .retryable(result.retryable())
+                .failed(result.failed())
+                .invalidTokens(result.invalidTokens()));
     }
 
     /**

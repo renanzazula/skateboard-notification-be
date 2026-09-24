@@ -148,6 +148,23 @@ class NotificationRecorderTest {
         });
     }
 
+    /**
+     * A direct send has no event, so there is nothing to claim — and it must
+     * still write the PENDING rows the retry and receipt passes depend on.
+     */
+    @Test
+    void aDirectSendRecordsDeliveriesWithoutClaimingAnEvent() {
+        NotificationDevice phone = device(USER_A, "phone");
+
+        PreparedDispatch prepared = recorder.recordDirect(draft(), List.of(phone));
+
+        verifyNoInteractions(processedEventPort);
+        verify(deviceRepositoryPort, never()).findNotifiableDevices(any(), any());
+        assertThat(prepared.devices()).containsExactly(phone);
+        assertThat(prepared.deliveries()).hasSize(1);
+        verify(notificationRepositoryPort).saveRecipients(any());
+    }
+
     private Notification draft() {
         return Notification.create(TENANT, NotificationType.NEW_PODCAST, "New podcast available",
                 "Barcelona Street Sessions #14", null, "PODCAST", "123", "{}");
