@@ -30,6 +30,8 @@ import java.time.ZoneOffset;
 public class NotificationDeviceController implements DevicesApi {
 
     private static final String DEVICE_MANAGE = "hasAuthority('FUNC_NOTIFICATION_DEVICE_MANAGE')";
+    /** A diagnostic, not self-service: granted to ADMIN only, unlike DEVICE_MANAGE. */
+    private static final String DEVICE_MANAGE_TEST = "hasAuthority('FUNC_NOTIFICATION_DEVICE_MANAGE_TEST')";
 
     private final RegisterDeviceUseCase registerDeviceUseCase;
     private final RemoveDeviceUseCase removeDeviceUseCase;
@@ -74,7 +76,7 @@ public class NotificationDeviceController implements DevicesApi {
      * Recipient is the caller and nobody else — the only input is the JWT.
      */
     @Override
-    @PreAuthorize(DEVICE_MANAGE)
+    @PreAuthorize(DEVICE_MANAGE_TEST)
     public ResponseEntity<TestNotificationResponse> sendTestNotification() {
         CurrentUser caller = currentUserProvider.require();
         SendTestNotificationUseCase.Result result = sendTestNotificationUseCase.execute(

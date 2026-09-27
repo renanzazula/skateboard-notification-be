@@ -148,7 +148,8 @@ infrastructure/         → messaging (topology, incl. DeadLetterQueueMonitor), 
   omits that autoconfiguration, so the proxy becomes a JDK dynamic one that carries no
   `@RestController`, and every route silently 404s.
 - **Push tokens are never logged in full and never returned in a response.**
-- **`POST /test-notification` can only reach the caller.** It is the one send not driven by an event:
+- **`POST /test-notification` can only reach the caller, and only admins can call it**
+  (`FUNC_NOTIFICATION_DEVICE_MANAGE_TEST`, ADMIN-only in the realm). It is the one send not driven by an event:
   devices come from `findEnabledDevicesOfUser(tenant, sub)`, never the fan-out query, and preferences
   are skipped on purpose (a muted type would make the diagnostic report "nothing sent"). It still goes
   through `NotificationRecorder.recordDirect` + `DispatchNotificationService`, so retries and receipt

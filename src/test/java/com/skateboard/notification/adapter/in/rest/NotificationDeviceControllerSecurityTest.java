@@ -154,10 +154,14 @@ class NotificationDeviceControllerSecurityTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    /**
+     * The self-service device authority every STANDARD user holds is not
+     * enough — the test send is an admin diagnostic.
+     */
     @Test
-    void rejectsATestNotificationWithoutTheDeviceAuthority() throws Exception {
+    void rejectsATestNotificationWithOnlyTheSelfServiceDeviceAuthority() throws Exception {
         mockMvc.perform(post("/test-notification")
-                        .with(jwt().authorities(() -> "FUNC_USER_SELF_READ")))
+                        .with(jwt().authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE")))
                 .andExpect(status().isForbidden());
     }
 
@@ -173,7 +177,7 @@ class NotificationDeviceControllerSecurityTest {
 
         mockMvc.perform(post("/test-notification")
                         .with(jwt().jwt(builder -> builder.subject(caller.toString()))
-                                .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE")))
+                                .authorities(() -> "FUNC_NOTIFICATION_DEVICE_MANAGE_TEST")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.devicesTargeted").value(2))
                 .andExpect(jsonPath("$.sent").value(1))
