@@ -46,6 +46,14 @@ public class DevicePersistenceAdapter implements DeviceRepositoryPort {
     }
 
     @Override
+    public List<NotificationDevice> findEnabledDevicesOfUser(UUID tenantId, UUID userId) {
+        return repository.findByTenantIdAndUserIdAndEnabledTrueOrderByCreatedAtAscIdAsc(tenantId, userId)
+                .stream()
+                .map(this::toDomain)
+                .toList();
+    }
+
+    @Override
     @Transactional
     public NotificationDevice save(NotificationDevice device) {
         return toDomain(repository.save(toEntity(device)));

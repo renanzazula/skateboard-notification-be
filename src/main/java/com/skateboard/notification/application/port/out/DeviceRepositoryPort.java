@@ -41,6 +41,13 @@ public interface DeviceRepositoryPort {
      */
     List<NotificationDevice> findNotifiableDevices(UUID tenantId, NotificationType type);
 
+    /**
+     * Every enabled device one user has registered in one tenant, with no
+     * preference applied — for sends addressed to that user alone, where the
+     * fan-out's opt-out rules do not belong.
+     */
+    List<NotificationDevice> findEnabledDevicesOfUser(UUID tenantId, UUID userId);
+
     NotificationDevice save(NotificationDevice device);
 
     /**
