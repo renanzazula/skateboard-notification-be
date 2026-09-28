@@ -46,6 +46,11 @@ public class DevicePersistenceAdapter implements DeviceRepositoryPort {
     }
 
     @Override
+    public List<UUID> findUsersWithEnabledDevices(UUID tenantId) {
+        return repository.findUsersWithEnabledDevices(tenantId);
+    }
+
+    @Override
     public List<NotificationDevice> findEnabledDevicesOfUser(UUID tenantId, UUID userId) {
         return repository.findByTenantIdAndUserIdAndEnabledTrueOrderByCreatedAtAscIdAsc(tenantId, userId)
                 .stream()

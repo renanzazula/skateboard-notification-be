@@ -1,13 +1,18 @@
 package com.skateboard.notification.adapter.out.persistence;
 
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.InboxRepositoryPort;
+import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
 import com.skateboard.notification.application.port.out.PreferenceRepositoryPort;
 import com.skateboard.notification.application.port.out.ProcessedEventPort;
 import com.skateboard.notification.domain.model.DevicePlatform;
+import com.skateboard.notification.domain.model.InboxEntry;
+import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.NotificationPreferences;
 import com.skateboard.notification.domain.model.NotificationType;
 import com.skateboard.notification.domain.model.PushProvider;
+import com.skateboard.notification.domain.model.UserNotification;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,6 +21,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -57,6 +64,8 @@ class NotificationPersistenceIntegrationTest {
     @Autowired private DeviceRepositoryPort deviceRepositoryPort;
     @Autowired private PreferenceRepositoryPort preferenceRepositoryPort;
     @Autowired private ProcessedEventPort processedEventPort;
+    @Autowired private NotificationRepositoryPort notificationRepositoryPort;
+    @Autowired private InboxRepositoryPort inboxRepositoryPort;
 
     @Test
     void aUserWithNoStoredPreferencesIsStillNotifiable() {
@@ -160,6 +169,93 @@ class NotificationPersistenceIntegrationTest {
                     assertThat(device.getId()).isEqualTo(first.getId());
                     assertThat(device.getPushToken()).isEqualTo("ExponentPushToken[b]");
                 });
+    }
+
+    /** Muting stops the push, not the inbox: the audience ignores preferences. */
+    @Test
+    void theInboxAudienceIncludesUsersWhoMutedTheType() {
+        UUID user = registerDevice(TENANT_A).getUserId();
+        savePreferences(user, false, null);
+
+        assertThat(deviceRepositoryPort.findUsersWithEnabledDevices(TENANT_A)).contains(user);
+        assertThat(deviceRepositoryPort.findNotifiableDevices(TENANT_A, NotificationType.NEW_PODCAST))
+                .extracting(NotificationDevice::getUserId)
+                .doesNotContain(user);
+    }
+
+    @Test
+    void theInboxListsNewestFirstAndPagesStably() throws InterruptedException {
+        UUID user = UUID.randomUUID();
+        Notification older = deliverTo(TENANT_A, user, "older");
+        Thread.sleep(5);
+        Notification newer = deliverTo(TENANT_A, user, "newer");
+
+        assertThat(inboxRepositoryPort.findPage(user, TENANT_A, 0, 10))
+                .extracting(entry -> entry.notification().getId())
+                .containsExactly(newer.getId(), older.getId());
+        assertThat(inboxRepositoryPort.findPage(user, TENANT_A, 1, 10))
+                .extracting(entry -> entry.notification().getId())
+                .containsExactly(older.getId());
+    }
+
+    @Test
+    void theInboxNeverShowsAnotherTenantsNotification() {
+        UUID user = UUID.randomUUID();
+        deliverTo(TENANT_B, user, "elsewhere");
+
+        assertThat(inboxRepositoryPort.findPage(user, TENANT_A, 0, 10)).isEmpty();
+        assertThat(inboxRepositoryPort.countUnread(user, TENANT_A)).isZero();
+    }
+
+    @Test
+    void markingReadChangesTheCountOnceAndKeepsTheFirstReadTime() {
+        UUID user = UUID.randomUUID();
+        Notification notification = deliverTo(TENANT_A, user, "one");
+        deliverTo(TENANT_A, user, "two");
+        assertThat(inboxRepositoryPort.countUnread(user, TENANT_A)).isEqualTo(2);
+
+        Instant firstRead = Instant.parse("2026-01-01T00:00:00Z");
+        assertThat(inboxRepositoryPort.markRead(user, TENANT_A, notification.getId(), firstRead)).isEqualTo(1);
+        assertThat(inboxRepositoryPort.markRead(user, TENANT_A, notification.getId(), Instant.now())).isZero();
+
+        assertThat(inboxRepositoryPort.countUnread(user, TENANT_A)).isEqualTo(1);
+        assertThat(inboxRepositoryPort.findPage(user, TENANT_A, 0, 10))
+                .filteredOn(entry -> entry.notification().getId().equals(notification.getId()))
+                .singleElement()
+                .extracting(InboxEntry::readAt)
+                .isEqualTo(firstRead);
+    }
+
+    @Test
+    void aUserCannotMarkSomeoneElsesNotificationRead() {
+        UUID owner = UUID.randomUUID();
+        UUID stranger = UUID.randomUUID();
+        Notification notification = deliverTo(TENANT_A, owner, "private");
+
+        assertThat(inboxRepositoryPort.markRead(stranger, TENANT_A, notification.getId(), Instant.now())).isZero();
+        assertThat(inboxRepositoryPort.isRecipient(stranger, TENANT_A, notification.getId())).isFalse();
+        assertThat(inboxRepositoryPort.isRecipient(owner, TENANT_A, notification.getId())).isTrue();
+        assertThat(inboxRepositoryPort.countUnread(owner, TENANT_A)).isEqualTo(1);
+    }
+
+    @Test
+    void readAllLeavesNotificationsThatArrivedAfterTheCutOff() throws InterruptedException {
+        UUID user = UUID.randomUUID();
+        deliverTo(TENANT_A, user, "seen");
+        Thread.sleep(5);
+        Instant loadedAt = Instant.now();
+        Thread.sleep(5);
+        deliverTo(TENANT_A, user, "arrived later");
+
+        assertThat(inboxRepositoryPort.markAllRead(user, TENANT_A, loadedAt, Instant.now())).isEqualTo(1);
+        assertThat(inboxRepositoryPort.countUnread(user, TENANT_A)).isEqualTo(1);
+    }
+
+    private Notification deliverTo(UUID tenantId, UUID userId, String body) {
+        Notification notification = notificationRepositoryPort.save(Notification.create(tenantId,
+                NotificationType.NEW_PODCAST, "New podcast available", body, null, "PODCAST", "p", "{}"));
+        notificationRepositoryPort.saveRecipients(List.of(UserNotification.create(notification.getId(), userId)));
+        return notification;
     }
 
     private NotificationDevice registerDevice(UUID tenantId) {

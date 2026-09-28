@@ -17,6 +17,10 @@ public interface SpringNotificationDeviceRepository extends JpaRepository<Notifi
     List<NotificationDeviceJpaEntity> findByTenantIdAndUserIdAndEnabledTrueOrderByCreatedAtAscIdAsc(
             UUID tenantId, UUID userId);
 
+    @Query("SELECT DISTINCT d.userId FROM NotificationDeviceJpaEntity d "
+            + "WHERE d.tenantId = :tenantId AND d.enabled = true")
+    List<UUID> findUsersWithEnabledDevices(@Param("tenantId") UUID tenantId);
+
     /**
      * Flips one column, so a dead token learned about after a send cannot
      * clobber a re-registration that happened while the send was in flight.

@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -64,7 +65,10 @@ public class DispatchNotificationService {
         }
 
         Notification notification = prepared.notification();
-        Map<String, String> data = readData(notification);
+        // notificationId rides along so tapping the push can mark the inbox
+        // entry read without a lookup.
+        Map<String, String> data = new HashMap<>(readData(notification));
+        data.put("notificationId", notification.getId().toString());
 
         List<PushMessage> messages = prepared.devices().stream()
                 .map(device -> new PushMessage(device.getPushToken(), notification.getTitle(),

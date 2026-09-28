@@ -147,6 +147,15 @@ infrastructure/         → messaging (topology, incl. DeadLetterQueueMonitor), 
   controllers implement generated interfaces and `@PreAuthorize` proxies them; a `@WebMvcTest` slice
   omits that autoconfiguration, so the proxy becomes a JDK dynamic one that carries no
   `@RestController`, and every route silently 404s.
+- **The inbox audience is not the push audience.** `NotificationRecorder.recordEvent` writes a
+  `user_notification` row for every user with an enabled device in the tenant
+  (`findUsersWithEnabledDevices`, no preferences applied), but PENDING deliveries only for
+  `findNotifiableDevices`. Muting a type stops the push, not the history the app's bell reads. A user
+  who never registered a device is unknown here and has no inbox. `/inbox` reuses
+  `FUNC_USER_SELF_READ`/`FUNC_USER_SELF_UPDATE`, like `/preferences`, so it needed no realm change.
+  `user_notification` has no `tenant_id`, so every inbox query joins `notification` for it. Read state
+  is written with targeted `UPDATE`s that skip already-read rows, keeping the first read time. Every push
+  carries `notificationId` in `data`, so tapping one can mark it read.
 - **Push tokens are never logged in full and never returned in a response.**
 - **`POST /test-notification` can only reach the caller, and only admins can call it**
   (`FUNC_NOTIFICATION_DEVICE_MANAGE_TEST`, ADMIN-only in the realm). It is the one send not driven by an event:
