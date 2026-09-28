@@ -75,8 +75,9 @@ public class NotificationRecorder {
 
         List<NotificationDevice> devices = deviceRepositoryPort
                 .findNotifiableDevices(notification.getTenantId(), notification.getType());
+        List<UUID> inboxRecipients = deviceRepositoryPort.findUsersWithEnabledDevices(notification.getTenantId());
 
-        return Optional.of(recordDeliveries(notification, devices));
+        return Optional.of(recordDeliveries(notification, devices, inboxRecipients));
     }
 
     /**
@@ -87,17 +88,25 @@ public class NotificationRecorder {
      */
     @Transactional
     public PreparedDispatch recordDirect(Notification draft, List<NotificationDevice> devices) {
-        return recordDeliveries(notificationRepositoryPort.save(draft), devices);
+        return recordDeliveries(notificationRepositoryPort.save(draft), devices, List.of());
     }
 
-    private PreparedDispatch recordDeliveries(Notification notification, List<NotificationDevice> devices) {
+    /**
+     * The inbox audience and the push audience differ: {@code inboxRecipients}
+     * ignores preferences, {@code devices} has them applied. Every device owner
+     * is added to the inbox too, so a push can never arrive for a notification
+     * the recipient's inbox does not have.
+     */
+    private PreparedDispatch recordDeliveries(Notification notification, List<NotificationDevice> devices,
+                                              List<UUID> inboxRecipients) {
+        recordRecipients(notification, devices, inboxRecipients);
+
         if (devices.isEmpty()) {
             log.info("notificationId={} type={} tenantId={} matched no notifiable devices",
                     notification.getId(), notification.getType(), notification.getTenantId());
             return new PreparedDispatch(notification, List.of(), List.of());
         }
 
-        recordRecipients(notification, devices);
         List<NotificationDelivery> deliveries = deliveryRepositoryPort.saveAll(devices.stream()
                 .map(device -> NotificationDelivery.pending(notification.getId(), device.getUserId(),
                         device.getId(), device.getPushProvider()))
@@ -110,9 +119,13 @@ public class NotificationRecorder {
      * One row per distinct user, not per device: three phones belonging to the
      * same person are one notification in their inbox.
      */
-    private void recordRecipients(Notification notification, List<NotificationDevice> devices) {
-        Set<UUID> userIds = new LinkedHashSet<>();
+    private void recordRecipients(Notification notification, List<NotificationDevice> devices,
+                                  List<UUID> inboxRecipients) {
+        Set<UUID> userIds = new LinkedHashSet<>(inboxRecipients);
         devices.forEach(device -> userIds.add(device.getUserId()));
+        if (userIds.isEmpty()) {
+            return;
+        }
 
         notificationRepositoryPort.saveRecipients(userIds.stream()
                 .map(userId -> UserNotification.create(notification.getId(), userId))

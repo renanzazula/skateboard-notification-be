@@ -168,6 +168,22 @@ class DispatchNotificationServiceTest {
         });
     }
 
+    /** What lets the app mark the inbox entry read when the push is tapped. */
+    @Test
+    void carriesTheNotificationIdSoATappedPushCanBeMarkedRead() {
+        when(pushNotificationProviderPort.send(any())).thenReturn(List.of(PushResult.accepted("t1")));
+        PreparedDispatch prepared = prepared(USER_A);
+
+        service.send(prepared);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PushMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(pushNotificationProviderPort).send(captor.capture());
+        assertThat(captor.getValue()).singleElement().satisfies(message ->
+                assertThat(message.data())
+                        .containsEntry("notificationId", prepared.notification().getId().toString()));
+    }
+
     /** An unreadable payload costs the deep link, never the notification. */
     @Test
     void stillSendsWhenTheStoredDataPayloadCannotBeParsed() {

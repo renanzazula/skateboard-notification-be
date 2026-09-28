@@ -1,8 +1,10 @@
 package com.skateboard.notification.infrastructure.web;
 
 import com.skateboard.notification.domain.exception.DeviceNotFoundException;
+import com.skateboard.notification.domain.exception.InboxNotificationNotFoundException;
 import com.skateboard.notification.infrastructure.web.dto.ErrorResponse;
 
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +13,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.OffsetDateTime;
@@ -30,6 +33,11 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage());
     }
 
+    @ExceptionHandler(InboxNotificationNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleInboxNotificationNotFound(InboxNotificationNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleBadRequest(IllegalArgumentException ex) {
         return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
@@ -39,6 +47,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         return buildResponse(HttpStatus.BAD_REQUEST,
                 "Invalid value for parameter '" + ex.getName() + "'");
+    }
+
+    /**
+     * Constraints the generator puts directly on parameters (e.g. the inbox's
+     * {@code @Min}/{@code @Max} paging bounds) fail as one of these rather than
+     * as {@link MethodArgumentNotValidException} — which one depends on whether
+     * the generated interface's {@code @Validated} proxy or Spring MVC's own
+     * method validation gets there first. Without this they would be a 500.
+     */
+    @ExceptionHandler({ConstraintViolationException.class, HandlerMethodValidationException.class})
+    public ResponseEntity<ErrorResponse> handleParameterValidation(Exception ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, "Invalid request parameters");
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

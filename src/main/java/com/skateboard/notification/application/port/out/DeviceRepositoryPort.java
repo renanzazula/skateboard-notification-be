@@ -42,6 +42,17 @@ public interface DeviceRepositoryPort {
     List<NotificationDevice> findNotifiableDevices(UUID tenantId, NotificationType type);
 
     /**
+     * Every user with at least one enabled device in this tenant, with no
+     * preference applied — the inbox audience. Muting a type or switching push
+     * off stops the push, not the history: the notification still happened,
+     * and the bell should still show it.
+     *
+     * <p>Only users this service has heard from can be listed: someone who
+     * never registered a device is unknown here and gets no inbox entry.
+     */
+    List<UUID> findUsersWithEnabledDevices(UUID tenantId);
+
+    /**
      * Every enabled device one user has registered in one tenant, with no
      * preference applied — for sends addressed to that user alone, where the
      * fan-out's opt-out rules do not belong.

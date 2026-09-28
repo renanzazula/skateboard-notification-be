@@ -133,6 +133,43 @@ class NotificationRecorderTest {
         verify(deliveryRepositoryPort, never()).saveAll(any());
     }
 
+    /**
+     * Muting a type stops the push, not the history: a user whose device the
+     * fan-out filtered out still gets the inbox entry, and no delivery.
+     */
+    @Test
+    void aUserWhoMutedTheTypeStillGetsAnInboxEntryButNoDelivery() {
+        when(processedEventPort.claim(any(), any())).thenReturn(true);
+        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
+                .thenReturn(List.of(device(USER_A, "a-phone")));
+        when(deviceRepositoryPort.findUsersWithEnabledDevices(TENANT)).thenReturn(List.of(USER_A, USER_B));
+
+        PreparedDispatch prepared = recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft()).orElseThrow();
+
+        assertThat(prepared.deliveries()).singleElement()
+                .satisfies(delivery -> assertThat(delivery.getUserId()).isEqualTo(USER_A));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UserNotification>> captor = ArgumentCaptor.forClass(List.class);
+        verify(notificationRepositoryPort).saveRecipients(captor.capture());
+        assertThat(captor.getValue())
+                .extracting(UserNotification::getUserId)
+                .containsExactlyInAnyOrder(USER_A, USER_B);
+    }
+
+    @Test
+    void recordsInboxEntriesEvenWhenNobodyIsNotifiable() {
+        when(processedEventPort.claim(any(), any())).thenReturn(true);
+        when(deviceRepositoryPort.findNotifiableDevices(TENANT, NotificationType.NEW_PODCAST))
+                .thenReturn(List.of());
+        when(deviceRepositoryPort.findUsersWithEnabledDevices(TENANT)).thenReturn(List.of(USER_B));
+
+        PreparedDispatch prepared = recorder.recordEvent(EVENT, "PODCAST_PUBLISHED", draft()).orElseThrow();
+
+        assertThat(prepared.isEmpty()).isTrue();
+        verify(notificationRepositoryPort).saveRecipients(any());
+        verify(deliveryRepositoryPort, never()).saveAll(any());
+    }
+
     @Test
     void deliveriesStartPendingWithNoAttemptRecorded() {
         when(processedEventPort.claim(any(), any())).thenReturn(true);
@@ -160,6 +197,7 @@ class NotificationRecorderTest {
 
         verifyNoInteractions(processedEventPort);
         verify(deviceRepositoryPort, never()).findNotifiableDevices(any(), any());
+        verify(deviceRepositoryPort, never()).findUsersWithEnabledDevices(any());
         assertThat(prepared.devices()).containsExactly(phone);
         assertThat(prepared.deliveries()).hasSize(1);
         verify(notificationRepositoryPort).saveRecipients(any());

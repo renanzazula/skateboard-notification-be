@@ -11,9 +11,9 @@
 # service does for a *published podcast* is driven by the PODCAST_PUBLISHED
 # event off RabbitMQ, not by any endpoint here — there is deliberately no
 # "send a notification to others" API. The one exception is /test-notification,
-# which can only ever reach the caller's own devices. Notification history (GET /notifications,
-# PATCH /notifications/{id}/read) is modelled in the schema but not exposed
-# yet; see the Phase 2 scope in the implementation plan.
+# which can only ever reach the caller's own devices. /inbox is the caller's
+# notification history (the app's bell and Notifications screen) — read-only
+# apart from read state, and always scoped to the caller.
 #
 # The /preferences contract is byte-compatible with skateboard-user-be's
 # /me/preferences, which this service takes over: same NotificationPreferences
@@ -31,6 +31,8 @@ tags:
     description: Push device registration for the currently authenticated user
   - name: preferences
     description: Notification preferences for the currently authenticated user
+  - name: inbox
+    description: Notification history and read state for the currently authenticated user
 
 paths:
 
@@ -228,6 +230,174 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # The inbox reuses FUNC_USER_SELF_READ / FUNC_USER_SELF_UPDATE, the same
+  # authorities /preferences carries: it is the caller's own data, and a new
+  # permission would need a hand edit of the production realm, which has
+  # already drifted from the committed export.
+  /inbox:
+    get:
+      tags: [inbox]
+      operationId: listInbox
+      summary: List the caller's notifications, newest first
+      description: >
+        One entry per notification the caller received, read or not. Offset
+        paging with no total count: the screen scrolls, it never shows a page
+        number, and hasMore is answered by fetching one row past the page.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_READ
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: One page of the caller's notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPageResponse'
+        '400':
+          description: Invalid paging parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /inbox/unread-count:
+    get:
+      tags: [inbox]
+      operationId: getInboxUnreadCount
+      summary: How many of the caller's notifications are unread
+      description: Backs the badge on the app's bell icon.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_READ
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadCountResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /inbox/{notificationId}/read:
+    post:
+      tags: [inbox]
+      operationId: markInboxNotificationRead
+      summary: Mark one of the caller's notifications as read
+      description: >
+        Idempotent — marking an already-read notification read again is a 204
+        and keeps the original read time. Keyed by the notification id, which
+        is also what a push carries, so tapping a push can mark it read
+        without a lookup. 404 when the caller never received it.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_UPDATE
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Marked read
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: The caller has no such notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /inbox/read-all:
+    post:
+      tags: [inbox]
+      operationId: markAllInboxNotificationsRead
+      summary: Mark every unread notification of the caller as read
+      description: >
+        before bounds the update to what the caller had actually seen: the app
+        sends the time it loaded the list, so a notification that arrives
+        between loading and tapping "mark all read" stays unread. Omitted
+        means now.
+      security:
+        - bearerAuth: []
+      x-required-permissions:
+        - FUNC_USER_SELF_UPDATE
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAllReadRequest'
+      responses:
+        '204':
+          description: Marked read
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Missing required permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -348,6 +518,71 @@ components:
       properties:
         notifications:
           $ref: '#/components/schemas/NotificationPreferences'
+
+    InboxItem:
+      type: object
+      required: [notificationId, type, title, body, data, createdAt, read]
+      properties:
+        notificationId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          description: Notification type, e.g. NEW_PODCAST
+        title:
+          type: string
+        body:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        data:
+          type: object
+          description: >
+            The same navigation metadata the push carried ({targetType,
+            targetId, targetSlug, ...}); the app maps it to a route.
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type: string
+          format: date-time
+          nullable: true
+        read:
+          type: boolean
+
+    InboxPageResponse:
+      type: object
+      required: [items, page, size, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+        page:
+          type: integer
+        size:
+          type: integer
+        hasMore:
+          type: boolean
+
+    UnreadCountResponse:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+          format: int64
+
+    MarkAllReadRequest:
+      type: object
+      properties:
+        before:
+          type: string
+          format: date-time
+          nullable: true
 
     ErrorResponse:
       type: object
