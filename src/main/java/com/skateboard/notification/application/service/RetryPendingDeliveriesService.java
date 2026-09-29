@@ -3,10 +3,12 @@ package com.skateboard.notification.application.service;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
 import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
+import com.skateboard.notification.application.port.out.PreferenceRepositoryPort;
 import com.skateboard.notification.domain.model.DeliveryStatus;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDelivery;
 import com.skateboard.notification.domain.model.NotificationDevice;
+import com.skateboard.notification.domain.model.NotificationType;
 import com.skateboard.notification.infrastructure.push.RetryProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,26 +36,36 @@ import java.util.UUID;
  * <p>Attempts are bounded. A delivery that has used its budget is marked FAILED
  * rather than retried forever, so a permanently unreachable device stops
  * costing a request per pass.
+ *
+ * <p>Preferences are re-checked here, not only when recipients were resolved.
+ * A delivery can sit PENDING for minutes, and a user who opts out in that
+ * window must not still get the push: "disabled means not sent" has to hold for
+ * a retry as much as for the first attempt.
  */
 @Service
 public class RetryPendingDeliveriesService {
 
     private static final Logger log = LoggerFactory.getLogger(RetryPendingDeliveriesService.class);
 
+    static final String OPTED_OUT_REASON = "Suppressed: user has disabled this notification type";
+
     private final DeliveryRepositoryPort deliveryRepositoryPort;
     private final NotificationRepositoryPort notificationRepositoryPort;
     private final DeviceRepositoryPort deviceRepositoryPort;
+    private final PreferenceRepositoryPort preferenceRepositoryPort;
     private final DispatchNotificationService dispatchNotificationService;
     private final RetryProperties properties;
 
     public RetryPendingDeliveriesService(DeliveryRepositoryPort deliveryRepositoryPort,
                                           NotificationRepositoryPort notificationRepositoryPort,
                                           DeviceRepositoryPort deviceRepositoryPort,
+                                          PreferenceRepositoryPort preferenceRepositoryPort,
                                           DispatchNotificationService dispatchNotificationService,
                                           RetryProperties properties) {
         this.deliveryRepositoryPort = deliveryRepositoryPort;
         this.notificationRepositoryPort = notificationRepositoryPort;
         this.deviceRepositoryPort = deviceRepositoryPort;
+        this.preferenceRepositoryPort = preferenceRepositoryPort;
         this.dispatchNotificationService = dispatchNotificationService;
         this.properties = properties;
     }
@@ -97,6 +110,8 @@ public class RetryPendingDeliveriesService {
 
         List<NotificationDevice> devices = new ArrayList<>();
         List<NotificationDelivery> sendable = new ArrayList<>();
+        // One lookup per user: a user with several devices shares one answer.
+        Map<UUID, Boolean> allowedByUser = new HashMap<>();
 
         for (NotificationDelivery delivery : deliveries) {
             Optional<NotificationDevice> device = deviceRepositoryPort.findById(delivery.getDeviceId());
@@ -106,6 +121,16 @@ public class RetryPendingDeliveriesService {
             if (device.isEmpty() || !device.get().isEnabled()) {
                 delivery.markFailed("Device is no longer registered for push");
                 deliveryRepositoryPort.save(delivery);
+                continue;
+            }
+            // The user may have opted out after the event was recorded. The
+            // delivery is failed rather than left PENDING so it is not
+            // reclaimed on every pass, and never sent.
+            if (!userAllows(allowedByUser, delivery.getUserId(), notification.get())) {
+                delivery.markFailed(OPTED_OUT_REASON);
+                deliveryRepositoryPort.save(delivery);
+                log.info("deliveryId={} userId={} type={} suppressed on retry: user opted out",
+                        delivery.getId(), delivery.getUserId(), notification.get().getType());
                 continue;
             }
             devices.add(device.get());
@@ -124,6 +149,17 @@ public class RetryPendingDeliveriesService {
 
         retireExhausted(sendable);
         return result.sent();
+    }
+
+    private boolean userAllows(Map<UUID, Boolean> cache, UUID userId, Notification notification) {
+        // A test push is a user checking the pipe works; preferences never
+        // apply to it (see SendTestNotificationService).
+        if (notification.getType() == NotificationType.TEST_NOTIFICATION) {
+            return true;
+        }
+        return cache.computeIfAbsent(userId, id -> preferenceRepositoryPort
+                .load(id, notification.getTenantId())
+                .allows(notification.getType()));
     }
 
     private void retireExhausted(List<NotificationDelivery> deliveries) {

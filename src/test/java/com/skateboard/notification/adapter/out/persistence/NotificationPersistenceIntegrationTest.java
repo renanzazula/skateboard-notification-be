@@ -76,6 +76,36 @@ class NotificationPersistenceIntegrationTest {
                 .contains(user);
     }
 
+    /** Explicit "on" rows behave the same as no rows at all. */
+    @Test
+    void aUserWithBothSwitchesExplicitlyOnIsNotifiable() {
+        NotificationDevice device = registerDevice(TENANT_A);
+        savePreferences(device.getUserId(), true, Map.of(NotificationType.NEW_PODCAST, true));
+
+        assertThat(deviceRepositoryPort.findNotifiableDevices(TENANT_A, NotificationType.NEW_PODCAST))
+                .extracting(NotificationDevice::getId)
+                .contains(device.getId());
+    }
+
+    /**
+     * The change applies to the next notification with no extra step: opting
+     * out and back in flips the very next fan-out query.
+     */
+    @Test
+    void changingThePodcastSettingTakesEffectOnTheNextFanOut() {
+        NotificationDevice device = registerDevice(TENANT_A);
+
+        savePreferences(device.getUserId(), null, Map.of(NotificationType.NEW_PODCAST, false));
+        assertThat(deviceRepositoryPort.findNotifiableDevices(TENANT_A, NotificationType.NEW_PODCAST))
+                .extracting(NotificationDevice::getId)
+                .doesNotContain(device.getId());
+
+        savePreferences(device.getUserId(), null, Map.of(NotificationType.NEW_PODCAST, true));
+        assertThat(deviceRepositoryPort.findNotifiableDevices(TENANT_A, NotificationType.NEW_PODCAST))
+                .extracting(NotificationDevice::getId)
+                .contains(device.getId());
+    }
+
     /**
      * The isolation guarantee. A notification raised for one tenant must never
      * reach another's devices, however few tenants exist today.

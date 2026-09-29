@@ -3,11 +3,13 @@ package com.skateboard.notification.application.service;
 import com.skateboard.notification.application.port.out.DeliveryRepositoryPort;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
 import com.skateboard.notification.application.port.out.NotificationRepositoryPort;
+import com.skateboard.notification.application.port.out.PreferenceRepositoryPort;
 import com.skateboard.notification.domain.model.DeliveryStatus;
 import com.skateboard.notification.domain.model.DevicePlatform;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDelivery;
 import com.skateboard.notification.domain.model.NotificationDevice;
+import com.skateboard.notification.domain.model.NotificationPreferences;
 import com.skateboard.notification.domain.model.NotificationType;
 import com.skateboard.notification.domain.model.PushProvider;
 import com.skateboard.notification.infrastructure.push.RetryProperties;
@@ -18,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -45,6 +48,7 @@ class RetryPendingDeliveriesServiceTest {
     @Mock private DeliveryRepositoryPort deliveryRepositoryPort;
     @Mock private NotificationRepositoryPort notificationRepositoryPort;
     @Mock private DeviceRepositoryPort deviceRepositoryPort;
+    @Mock private PreferenceRepositoryPort preferenceRepositoryPort;
     @Mock private DispatchNotificationService dispatchNotificationService;
 
     private RetryPendingDeliveriesService service;
@@ -54,13 +58,17 @@ class RetryPendingDeliveriesServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new RetryPendingDeliveriesService(deliveryRepositoryPort, notificationRepositoryPort,
-                deviceRepositoryPort, dispatchNotificationService,
+                deviceRepositoryPort, preferenceRepositoryPort, dispatchNotificationService,
                 new RetryProperties(true, 4, 120, 100));
         notification = Notification.create(TENANT, NotificationType.NEW_PODCAST, "New podcast available",
                 "Barcelona Street Sessions #14", null, "PODCAST", "123", "{}");
         when(deliveryRepositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(dispatchNotificationService.send(any()))
                 .thenReturn(new DispatchNotificationService.Result(1, 1, 0, 0, 0));
+        // A user with no stored rows: absence means enabled.
+        when(preferenceRepositoryPort.load(any(), any()))
+                .thenAnswer(invocation -> NotificationPreferences.defaults(invocation.getArgument(0),
+                        invocation.getArgument(1)));
     }
 
     @Test
@@ -85,6 +93,96 @@ class RetryPendingDeliveriesServiceTest {
         verify(dispatchNotificationService).send(captor.capture());
         assertThat(captor.getValue().devices()).containsExactly(device);
         assertThat(captor.getValue().deliveries()).containsExactly(delivery);
+    }
+
+    /**
+     * The user opted out of podcasts after the event was recorded but before
+     * this pass ran. The push must not go out, and the row must be retired so
+     * it is not reclaimed on every pass.
+     */
+    @Test
+    void suppressesADeliveryWhenTheUserHasSinceDisabledThatType() {
+        NotificationDevice device = device();
+        NotificationDelivery delivery = pending(device);
+        claim(delivery);
+        when(notificationRepositoryPort.findById(notification.getId())).thenReturn(Optional.of(notification));
+        when(deviceRepositoryPort.findById(device.getId())).thenReturn(Optional.of(device));
+        NotificationPreferences optedOut = NotificationPreferences.defaults(USER, TENANT);
+        optedOut.update(null, Map.of(NotificationType.NEW_PODCAST, false));
+        when(preferenceRepositoryPort.load(USER, TENANT)).thenReturn(optedOut);
+
+        assertThat(service.run()).isZero();
+
+        assertThat(delivery.getStatus()).isEqualTo(DeliveryStatus.FAILED);
+        assertThat(delivery.getFailureReason()).contains("Suppressed");
+        verifyNoInteractions(dispatchNotificationService);
+    }
+
+    /** The master switch closes every type, whatever the per-type flag says. */
+    @Test
+    void suppressesADeliveryWhenTheUserHasSinceDisabledPushAltogether() {
+        NotificationDevice device = device();
+        NotificationDelivery delivery = pending(device);
+        claim(delivery);
+        when(notificationRepositoryPort.findById(notification.getId())).thenReturn(Optional.of(notification));
+        when(deviceRepositoryPort.findById(device.getId())).thenReturn(Optional.of(device));
+        NotificationPreferences pushOff = NotificationPreferences.defaults(USER, TENANT);
+        pushOff.update(false, null);
+        when(preferenceRepositoryPort.load(USER, TENANT)).thenReturn(pushOff);
+
+        assertThat(service.run()).isZero();
+
+        assertThat(delivery.getStatus()).isEqualTo(DeliveryStatus.FAILED);
+        verifyNoInteractions(dispatchNotificationService);
+    }
+
+    /** Only the opted-out user is dropped from a shared batch. */
+    @Test
+    void stillSendsToOtherUsersInTheSameBatch() {
+        UUID otherUser = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        NotificationDevice optedOutDevice = device();
+        NotificationDevice otherDevice = NotificationDevice.register(otherUser, TENANT, "install-2",
+                DevicePlatform.IOS, PushProvider.EXPO, "ExponentPushToken[def]", "1.5.0", "iPhone");
+        NotificationDelivery optedOutDelivery = pending(optedOutDevice);
+        NotificationDelivery otherDelivery = NotificationDelivery.pending(notification.getId(), otherUser,
+                otherDevice.getId(), PushProvider.EXPO);
+        when(deliveryRepositoryPort.claimRetryable(anyInt(), any(), anyInt()))
+                .thenReturn(List.of(optedOutDelivery, otherDelivery));
+        when(notificationRepositoryPort.findById(notification.getId())).thenReturn(Optional.of(notification));
+        when(deviceRepositoryPort.findById(optedOutDevice.getId())).thenReturn(Optional.of(optedOutDevice));
+        when(deviceRepositoryPort.findById(otherDevice.getId())).thenReturn(Optional.of(otherDevice));
+        NotificationPreferences optedOut = NotificationPreferences.defaults(USER, TENANT);
+        optedOut.update(null, Map.of(NotificationType.NEW_PODCAST, false));
+        when(preferenceRepositoryPort.load(USER, TENANT)).thenReturn(optedOut);
+
+        assertThat(service.run()).isEqualTo(1);
+
+        ArgumentCaptor<PreparedDispatch> captor = ArgumentCaptor.forClass(PreparedDispatch.class);
+        verify(dispatchNotificationService).send(captor.capture());
+        assertThat(captor.getValue().devices()).containsExactly(otherDevice);
+        assertThat(captor.getValue().deliveries()).containsExactly(otherDelivery);
+        assertThat(optedOutDelivery.getStatus()).isEqualTo(DeliveryStatus.FAILED);
+    }
+
+    /**
+     * A test push is a user checking the pipe works — preferences never apply,
+     * on retry any more than on the first send.
+     */
+    @Test
+    void neverAppliesPreferencesToATestNotification() {
+        notification = Notification.create(TENANT, NotificationType.TEST_NOTIFICATION, "Test", "Test",
+                null, "TEST", null, "{}");
+        NotificationDevice device = device();
+        NotificationDelivery delivery = pending(device);
+        claim(delivery);
+        when(notificationRepositoryPort.findById(notification.getId())).thenReturn(Optional.of(notification));
+        when(deviceRepositoryPort.findById(device.getId())).thenReturn(Optional.of(device));
+        NotificationPreferences pushOff = NotificationPreferences.defaults(USER, TENANT);
+        pushOff.update(false, null);
+        when(preferenceRepositoryPort.load(USER, TENANT)).thenReturn(pushOff);
+
+        assertThat(service.run()).isEqualTo(1);
+        verify(dispatchNotificationService).send(any());
     }
 
     /**
