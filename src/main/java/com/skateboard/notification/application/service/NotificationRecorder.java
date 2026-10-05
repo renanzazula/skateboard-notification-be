@@ -92,6 +92,21 @@ public class NotificationRecorder {
     }
 
     /**
+     * Records a notification addressed to a caller-chosen set of recipients,
+     * also with no event behind it. Unlike {@link #recordDirect}, the inbox
+     * audience is the explicit {@code recipientUserIds} rather than "whoever
+     * owns a device in {@code devices}" — a targeted send (e.g. selected
+     * admins for a guest application) must land in every chosen recipient's
+     * inbox even if they have no push device registered; a push is a bonus,
+     * not the definition of "notified".
+     */
+    @Transactional
+    public PreparedDispatch recordForRecipients(Notification draft, List<NotificationDevice> devices,
+                                                 List<UUID> recipientUserIds) {
+        return recordDeliveries(notificationRepositoryPort.save(draft), devices, recipientUserIds);
+    }
+
+    /**
      * The inbox audience and the push audience differ: {@code inboxRecipients}
      * ignores preferences, {@code devices} has them applied. Every device owner
      * is added to the inbox too, so a push can never arrive for a notification

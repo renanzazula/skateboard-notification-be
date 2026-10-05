@@ -9,6 +9,8 @@ package com.skateboard.notification.domain.model;
  */
 public enum NotificationType {
     NEW_PODCAST,
+    /** Admin-only: a user submitted a "be a podcast guest" application (.docs/README_GUEST_APPLICATION_lang.md). */
+    GUEST_APPLICATION_RECEIVED,
     NEW_POST,
     NEW_MAGAZINE,
     FEATURED_CONTENT,

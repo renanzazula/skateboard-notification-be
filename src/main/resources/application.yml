@@ -75,6 +75,16 @@ app:
       # Tokens must include this in their "aud" claim. Populated by the
       # audience-notification-be protocol mapper on the two public clients.
       audience: ${APP_SECURITY_OAUTH2_AUDIENCE:skateboard-notification-be}
+      service-account:
+        # This service's own client-credentials grant, for calling
+        # app-config-be/user-be as itself (Guest Application settings and
+        # recipient email resolution — see ServiceAccountTokenProvider).
+        # Requires skateboard-notification-be to have serviceAccountsEnabled
+        # in the realm; previously false, since this was a resource server
+        # only (see application.yml's prior comment on this client).
+        token-uri: ${APP_SECURITY_OAUTH2_TOKEN_URI:http://localhost:8180/realms/skateboard-podcast/protocol/openid-connect/token}
+        client-id: ${APP_SECURITY_OAUTH2_SERVICE_ACCOUNT_CLIENT_ID:skateboard-notification-be}
+        client-secret: ${APP_SECURITY_OAUTH2_SERVICE_ACCOUNT_CLIENT_SECRET:dev-notification-be-secret}
   tenancy:
     # Every user shares this tenant today (no real multi-tenancy yet). Used
     # when a token carries no tenant_id claim — the attribute is admin-managed
@@ -117,6 +127,33 @@ push:
     max-age-hours: ${PUSH_RECEIPTS_MAX_AGE_HOURS:24}
     batch-limit: ${PUSH_RECEIPTS_BATCH_LIMIT:100}
     cron: ${PUSH_RECEIPTS_CRON:0 */15 * * * *}
+
+email:
+  brevo:
+    base-url: ${BREVO_BASE_URL:https://api.brevo.com}
+    # Never logged, never returned in a response.
+    api-key: ${BREVO_API_KEY:}
+    sender-name: ${BREVO_SENDER_NAME:Skateboard Podcast}
+    sender-email: ${BREVO_SENDER_EMAIL:no-reply@your-domain.com}
+    connect-timeout-ms: ${BREVO_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${BREVO_READ_TIMEOUT_MS:10000}
+
+  retry:
+    enabled: ${EMAIL_RETRY_ENABLED:true}
+    max-attempts: ${EMAIL_RETRY_MAX_ATTEMPTS:4}
+    backoff-seconds: ${EMAIL_RETRY_BACKOFF_SECONDS:120}
+    batch-limit: ${EMAIL_RETRY_BATCH_LIMIT:100}
+    cron: ${EMAIL_RETRY_CRON:0 */2 * * * *}
+
+clients:
+  app-config-be:
+    base-url: ${APP_CONFIG_BE_BASE_URL:http://localhost:8083}
+    connect-timeout-ms: ${APP_CONFIG_BE_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${APP_CONFIG_BE_READ_TIMEOUT_MS:5000}
+  user-be:
+    base-url: ${USER_BE_BASE_URL:http://localhost:8082}
+    connect-timeout-ms: ${USER_BE_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${USER_BE_READ_TIMEOUT_MS:5000}
 
 messaging:
   dead-letter:

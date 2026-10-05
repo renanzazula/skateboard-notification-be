@@ -203,6 +203,35 @@ class NotificationRecorderTest {
         verify(notificationRepositoryPort).saveRecipients(any());
     }
 
+    /**
+     * A targeted send's inbox audience is the caller's explicit recipient
+     * list, not "whoever owns a device" — a selected admin with no
+     * registered device must still get the in-app entry.
+     */
+    @Test
+    void recordForRecipientsUsesTheExplicitRecipientListForTheInboxEvenWithNoDevices() {
+        PreparedDispatch prepared = recorder.recordForRecipients(draft(), List.of(), List.of(USER_A, USER_B));
+
+        assertThat(prepared.isEmpty()).isTrue();
+        verifyNoInteractions(processedEventPort);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UserNotification>> captor = ArgumentCaptor.forClass(List.class);
+        verify(notificationRepositoryPort).saveRecipients(captor.capture());
+        assertThat(captor.getValue())
+                .extracting(UserNotification::getUserId)
+                .containsExactlyInAnyOrder(USER_A, USER_B);
+    }
+
+    @Test
+    void recordForRecipientsStillRecordsADeliveryForEachDevice() {
+        NotificationDevice phone = device(USER_A, "phone");
+
+        PreparedDispatch prepared = recorder.recordForRecipients(draft(), List.of(phone), List.of(USER_A, USER_B));
+
+        assertThat(prepared.devices()).containsExactly(phone);
+        assertThat(prepared.deliveries()).hasSize(1);
+    }
+
     private Notification draft() {
         return Notification.create(TENANT, NotificationType.NEW_PODCAST, "New podcast available",
                 "Barcelona Street Sessions #14", null, "PODCAST", "123", "{}");
