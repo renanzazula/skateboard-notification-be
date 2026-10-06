@@ -59,7 +59,7 @@ public class GuestApplicationNotificationRecorder {
      *         caller must do nothing at all
      */
     @Transactional
-    public Optional<Recorded> record(UUID eventId, String eventType, Notification adminNotificationDraft,
+    public Optional<Recorded> recordSubmission(UUID eventId, String eventType, Notification adminNotificationDraft,
                                      List<NotificationDevice> adminDevices, List<UUID> adminUserIds,
                                      List<EmailDelivery> emailDeliveries) {
         if (!processedEventPort.claim(eventId, eventType)) {

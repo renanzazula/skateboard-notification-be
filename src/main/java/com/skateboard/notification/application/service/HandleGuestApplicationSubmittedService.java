@@ -92,7 +92,7 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
         List<NotificationDevice> adminDevices = recipientIds.isEmpty() ? List.of() : devicesFor(input, recipientIds);
         List<EmailDelivery> emails = buildEmailDeliveries(input, settings, resolvedRecipients);
 
-        Optional<GuestApplicationNotificationRecorder.Recorded> recorded = recorder.record(
+        Optional<GuestApplicationNotificationRecorder.Recorded> recorded = recorder.recordSubmission(
                 input.eventId(), EVENT_TYPE, adminDraft, adminDevices, recipientIds, emails);
 
         if (recorded.isEmpty()) {

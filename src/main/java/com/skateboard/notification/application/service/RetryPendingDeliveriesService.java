@@ -114,27 +114,10 @@ public class RetryPendingDeliveriesService {
         Map<UUID, Boolean> allowedByUser = new HashMap<>();
 
         for (NotificationDelivery delivery : deliveries) {
-            Optional<NotificationDevice> device = deviceRepositoryPort.findById(delivery.getDeviceId());
-            // A device that has since been deleted or disabled — most often
-            // because its token turned out to be dead, or the user logged out —
-            // is not worth another attempt.
-            if (device.isEmpty() || !device.get().isEnabled()) {
-                delivery.markFailed("Device is no longer registered for push");
-                deliveryRepositoryPort.save(delivery);
-                continue;
-            }
-            // The user may have opted out after the event was recorded. The
-            // delivery is failed rather than left PENDING so it is not
-            // reclaimed on every pass, and never sent.
-            if (!userAllows(allowedByUser, delivery.getUserId(), notification.get())) {
-                delivery.markFailed(OPTED_OUT_REASON);
-                deliveryRepositoryPort.save(delivery);
-                log.info("deliveryId={} userId={} type={} suppressed on retry: user opted out",
-                        delivery.getId(), delivery.getUserId(), notification.get().getType());
-                continue;
-            }
-            devices.add(device.get());
-            sendable.add(delivery);
+            classifyForResend(delivery, notification.get(), allowedByUser).ifPresent(device -> {
+                devices.add(device);
+                sendable.add(delivery);
+            });
         }
 
         if (sendable.isEmpty()) {
@@ -149,6 +132,36 @@ public class RetryPendingDeliveriesService {
 
         retireExhausted(sendable);
         return result.sent();
+    }
+
+    /**
+     * Resolves whether one delivery is still worth sending, failing it in
+     * place (and saving) when it is not. Split out of {@link #resend} so the
+     * loop there has a single outcome per delivery to react to, rather than
+     * two separate early-exit branches.
+     */
+    private Optional<NotificationDevice> classifyForResend(NotificationDelivery delivery, Notification notification,
+                                                             Map<UUID, Boolean> allowedByUser) {
+        Optional<NotificationDevice> device = deviceRepositoryPort.findById(delivery.getDeviceId());
+        // A device that has since been deleted or disabled — most often
+        // because its token turned out to be dead, or the user logged out —
+        // is not worth another attempt.
+        if (device.isEmpty() || !device.get().isEnabled()) {
+            delivery.markFailed("Device is no longer registered for push");
+            deliveryRepositoryPort.save(delivery);
+            return Optional.empty();
+        }
+        // The user may have opted out after the event was recorded. The
+        // delivery is failed rather than left PENDING so it is not
+        // reclaimed on every pass, and never sent.
+        if (!userAllows(allowedByUser, delivery.getUserId(), notification)) {
+            delivery.markFailed(OPTED_OUT_REASON);
+            deliveryRepositoryPort.save(delivery);
+            log.info("deliveryId={} userId={} type={} suppressed on retry: user opted out",
+                    delivery.getId(), delivery.getUserId(), notification.getType());
+            return Optional.empty();
+        }
+        return device;
     }
 
     private boolean userAllows(Map<UUID, Boolean> cache, UUID userId, Notification notification) {
