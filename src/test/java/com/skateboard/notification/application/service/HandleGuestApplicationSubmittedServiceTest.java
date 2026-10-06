@@ -25,7 +25,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -58,7 +57,7 @@ class HandleGuestApplicationSubmittedServiceTest {
     @Test
     void aRedeliveredEventSendsNothing() {
         when(settingsPort.getSettings()).thenReturn(Optional.empty());
-        when(recorder.record(any(), any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+        when(recorder.recordSubmission(any(), any(), any(), any(), any(), any())).thenReturn(Optional.empty());
 
         HandleGuestApplicationSubmittedUseCase.Result result = service.execute(input());
 
@@ -123,7 +122,7 @@ class HandleGuestApplicationSubmittedServiceTest {
         assertThat(result.adminsNotifiedInApp()).isZero();
         verifyNoInteractions(deviceRepositoryPort);
         ArgumentCaptor<Notification> draftCaptor = ArgumentCaptor.forClass(Notification.class);
-        verify(recorder).record(any(), any(), draftCaptor.capture(), any(), any(), any());
+        verify(recorder).recordSubmission(any(), any(), draftCaptor.capture(), any(), any(), any());
         assertThat(draftCaptor.getValue()).isNull();
     }
 
@@ -174,12 +173,12 @@ class HandleGuestApplicationSubmittedServiceTest {
         service.execute(input());
 
         var inOrder = org.mockito.Mockito.inOrder(recorder, dispatchEmailService);
-        inOrder.verify(recorder).record(eq(EVENT), eq("GUEST_APPLICATION_SUBMITTED"), any(), any(), any(), any());
+        inOrder.verify(recorder).recordSubmission(eq(EVENT), eq("GUEST_APPLICATION_SUBMITTED"), any(), any(), any(), any());
         inOrder.verify(dispatchEmailService).send(any());
     }
 
     private void recorderAccepts() {
-        when(recorder.record(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
+        when(recorder.recordSubmission(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
             Notification draft = invocation.getArgument(2);
             List<NotificationDevice> devices = invocation.getArgument(3);
             List<EmailDelivery> emails = invocation.getArgument(5);
@@ -196,28 +195,28 @@ class HandleGuestApplicationSubmittedServiceTest {
 
     private Notification capturedAdminDraft() {
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(recorder).record(any(), any(), captor.capture(), any(), any(), any());
+        verify(recorder).recordSubmission(any(), any(), captor.capture(), any(), any(), any());
         return captor.getValue();
     }
 
     @SuppressWarnings("unchecked")
     private List<EmailDelivery> capturedEmails() {
         ArgumentCaptor<List<EmailDelivery>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).record(any(), any(), any(), any(), any(), captor.capture());
+        verify(recorder).recordSubmission(any(), any(), any(), any(), any(), captor.capture());
         return captor.getValue();
     }
 
     @SuppressWarnings("unchecked")
     private ArgumentCaptor<List<UUID>> captureRecipientIds() {
         ArgumentCaptor<List<UUID>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).record(any(), any(), any(), any(), captor.capture(), any());
+        verify(recorder).recordSubmission(any(), any(), any(), any(), captor.capture(), any());
         return captor;
     }
 
     @SuppressWarnings("unchecked")
     private ArgumentCaptor<List<NotificationDevice>> captureDevices() {
         ArgumentCaptor<List<NotificationDevice>> captor = ArgumentCaptor.forClass(List.class);
-        verify(recorder).record(any(), any(), any(), captor.capture(), any(), any());
+        verify(recorder).recordSubmission(any(), any(), any(), captor.capture(), any(), any());
         return captor;
     }
 

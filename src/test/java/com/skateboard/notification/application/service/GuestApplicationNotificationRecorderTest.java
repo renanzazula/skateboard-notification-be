@@ -46,7 +46,7 @@ class GuestApplicationNotificationRecorderTest {
     void aRedeliveredEventWritesNothing() {
         when(processedEventPort.claim(EVENT, EVENT_TYPE)).thenReturn(false);
 
-        assertThat(recorder.record(EVENT, EVENT_TYPE, draft(), List.of(), List.of(ADMIN), List.of(email())))
+        assertThat(recorder.recordSubmission(EVENT, EVENT_TYPE, draft(), List.of(), List.of(ADMIN), List.of(email())))
                 .isEmpty();
 
         verifyNoInteractions(notificationRecorder);
@@ -61,7 +61,7 @@ class GuestApplicationNotificationRecorderTest {
         when(emailDeliveryRepositoryPort.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Optional<GuestApplicationNotificationRecorder.Recorded> recorded =
-                recorder.record(EVENT, EVENT_TYPE, draft(), List.of(), List.of(ADMIN), List.of(email()));
+                recorder.recordSubmission(EVENT, EVENT_TYPE, draft(), List.of(), List.of(ADMIN), List.of(email()));
 
         assertThat(recorded).isPresent();
         assertThat(recorded.get().pushDispatch()).contains(prepared);
@@ -74,7 +74,7 @@ class GuestApplicationNotificationRecorderTest {
         when(emailDeliveryRepositoryPort.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Optional<GuestApplicationNotificationRecorder.Recorded> recorded =
-                recorder.record(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of(email()));
+                recorder.recordSubmission(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of(email()));
 
         assertThat(recorded).isPresent();
         assertThat(recorded.get().pushDispatch()).isEmpty();
@@ -88,7 +88,7 @@ class GuestApplicationNotificationRecorderTest {
         when(emailDeliveryRepositoryPort.saveAll(List.of(saved))).thenReturn(List.of(saved));
 
         Optional<GuestApplicationNotificationRecorder.Recorded> recorded =
-                recorder.record(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of(saved));
+                recorder.recordSubmission(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of(saved));
 
         assertThat(recorded.get().emailDeliveries()).containsExactly(saved);
     }
@@ -97,7 +97,7 @@ class GuestApplicationNotificationRecorderTest {
     void doesNotCallSaveAllWithAnEmptyEmailList() {
         when(processedEventPort.claim(EVENT, EVENT_TYPE)).thenReturn(true);
 
-        recorder.record(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of());
+        recorder.recordSubmission(EVENT, EVENT_TYPE, null, List.of(), List.of(), List.of());
 
         verify(emailDeliveryRepositoryPort, never()).saveAll(any());
     }

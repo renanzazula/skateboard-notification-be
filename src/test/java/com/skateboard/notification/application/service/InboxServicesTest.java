@@ -21,6 +21,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -80,12 +81,13 @@ class InboxServicesTest {
 
     @Test
     void rejectsPagingOutsideTheContract() {
-        assertThatThrownBy(() -> listInboxService.execute(new ListInboxUseCase.Input(USER, TENANT, -1, 20)))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> listInboxService.execute(new ListInboxUseCase.Input(USER, TENANT, 0, 0)))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> listInboxService.execute(new ListInboxUseCase.Input(USER, TENANT, 0, 51)))
-                .isInstanceOf(IllegalArgumentException.class);
+        ListInboxUseCase.Input negativePage = new ListInboxUseCase.Input(USER, TENANT, -1, 20);
+        ListInboxUseCase.Input zeroSize = new ListInboxUseCase.Input(USER, TENANT, 0, 0);
+        ListInboxUseCase.Input oversizedPage = new ListInboxUseCase.Input(USER, TENANT, 0, 51);
+
+        assertThatThrownBy(() -> listInboxService.execute(negativePage)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> listInboxService.execute(zeroSize)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> listInboxService.execute(oversizedPage)).isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(inboxRepositoryPort);
     }
 
@@ -110,16 +112,19 @@ class InboxServicesTest {
         when(inboxRepositoryPort.markRead(eq(USER), eq(TENANT), eq(NOTIFICATION), any())).thenReturn(0);
         when(inboxRepositoryPort.isRecipient(USER, TENANT, NOTIFICATION)).thenReturn(true);
 
-        markReadService.execute(new MarkNotificationReadUseCase.Input(USER, TENANT, NOTIFICATION));
+        assertThatCode(() ->
+                markReadService.execute(new MarkNotificationReadUseCase.Input(USER, TENANT, NOTIFICATION)))
+                .doesNotThrowAnyException();
+        verify(inboxRepositoryPort).isRecipient(USER, TENANT, NOTIFICATION);
     }
 
     @Test
     void markingSomeoneElsesNotificationReadIsNotFound() {
         when(inboxRepositoryPort.markRead(eq(USER), eq(TENANT), eq(NOTIFICATION), any())).thenReturn(0);
         when(inboxRepositoryPort.isRecipient(USER, TENANT, NOTIFICATION)).thenReturn(false);
+        MarkNotificationReadUseCase.Input input = new MarkNotificationReadUseCase.Input(USER, TENANT, NOTIFICATION);
 
-        assertThatThrownBy(() ->
-                markReadService.execute(new MarkNotificationReadUseCase.Input(USER, TENANT, NOTIFICATION)))
+        assertThatThrownBy(() -> markReadService.execute(input))
                 .isInstanceOf(InboxNotificationNotFoundException.class);
     }
 

@@ -18,7 +18,6 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -68,11 +67,7 @@ public class BrevoEmailProvider implements EmailProviderPort {
 
     @Override
     public List<EmailResult> send(List<EmailMessage> messages) {
-        List<EmailResult> results = new ArrayList<>(messages.size());
-        for (EmailMessage message : messages) {
-            results.add(sendOne(message));
-        }
-        return results;
+        return messages.stream().map(this::sendOne).toList();
     }
 
     private EmailResult sendOne(EmailMessage message) {
