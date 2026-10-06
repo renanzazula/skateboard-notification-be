@@ -34,6 +34,19 @@ public final class EventTopology {
      */
     public static final String PODCAST_PUBLISHED_BINDING = "podcast.published.*";
 
+    /**
+     * Its own queue rather than another binding on {@link #QUEUE}: that
+     * queue's one listener (PodcastPublishedEventListener) already
+     * dead-letters anything whose eventType it doesn't recognise, so binding
+     * a second event type to it would dead-letter every guest-application
+     * submission instead of processing it. A dedicated queue means this
+     * feature cannot regress podcast notification delivery, and vice versa.
+     */
+    public static final String GUEST_APPLICATION_QUEUE = "notification.events.guest-application";
+    public static final String GUEST_APPLICATION_DEAD_LETTER_QUEUE = "notification.events.guest-application.dlq";
+    public static final String GUEST_APPLICATION_SUBMITTED_ROUTING_KEY = "podcast.guest-application.submitted.v1";
+    public static final String GUEST_APPLICATION_SUBMITTED_BINDING = "podcast.guest-application.submitted.*";
+
     private EventTopology() {
     }
 }

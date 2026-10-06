@@ -43,6 +43,15 @@ class NotificationTemplateResolverTest {
     }
 
     @Test
+    void rendersTheApplicantNameIntoTheGuestApplicationBody() {
+        NotificationTemplateResolver.Template template = resolver.resolve(
+                NotificationType.GUEST_APPLICATION_RECEIVED, Map.of("name", "Jane Doe"));
+
+        assertThat(template.title()).isEqualTo("New guest application");
+        assertThat(template.body()).isEqualTo("Jane Doe applied to be a podcast guest");
+    }
+
+    @Test
     void rejectsATypeThatHasNoTemplateInsteadOfSendingBlankCopy() {
         assertThatThrownBy(() -> resolver.resolve(NotificationType.NEW_MAGAZINE, Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)

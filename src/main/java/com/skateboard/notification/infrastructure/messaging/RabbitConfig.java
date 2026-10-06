@@ -63,6 +63,38 @@ public class RabbitConfig {
                 .with(EventTopology.DEAD_LETTER_QUEUE);
     }
 
+    // ── Guest Application queue — see EventTopology.GUEST_APPLICATION_QUEUE
+    //    for why this is separate from notificationEventsQueue above ──────────
+
+    @Bean
+    public Queue guestApplicationEventsQueue() {
+        return QueueBuilder.durable(EventTopology.GUEST_APPLICATION_QUEUE)
+                .deadLetterExchange(EventTopology.DEAD_LETTER_EXCHANGE)
+                .deadLetterRoutingKey(EventTopology.GUEST_APPLICATION_DEAD_LETTER_QUEUE)
+                .build();
+    }
+
+    @Bean
+    public Queue guestApplicationEventsDeadLetterQueue() {
+        return QueueBuilder.durable(EventTopology.GUEST_APPLICATION_DEAD_LETTER_QUEUE).build();
+    }
+
+    @Bean
+    public Binding guestApplicationSubmittedBinding(Queue guestApplicationEventsQueue,
+                                                      TopicExchange applicationEventsExchange) {
+        return BindingBuilder.bind(guestApplicationEventsQueue)
+                .to(applicationEventsExchange)
+                .with(EventTopology.GUEST_APPLICATION_SUBMITTED_BINDING);
+    }
+
+    @Bean
+    public Binding guestApplicationDeadLetterBinding(Queue guestApplicationEventsDeadLetterQueue,
+                                                       TopicExchange applicationEventsDeadLetterExchange) {
+        return BindingBuilder.bind(guestApplicationEventsDeadLetterQueue)
+                .to(applicationEventsDeadLetterExchange)
+                .with(EventTopology.GUEST_APPLICATION_DEAD_LETTER_QUEUE);
+    }
+
     /**
      * Uses the application's own ObjectMapper so the JavaTimeModule Boot
      * configured is in play — without it an ISO-8601 occurredAt fails to
