@@ -146,14 +146,19 @@ email:
     cron: ${EMAIL_RETRY_CRON:0 */2 * * * *}
 
 clients:
+  # Env var names deliberately match skateboard-ui-backend's own clients.*
+  # block (CLIENTS_APP_CONFIG_*, CLIENTS_USER_*) even though the YAML key
+  # here is "app-config-be"/"user-be" — both services call the same targets,
+  # so reusing the same names means one shared Railway value covers both
+  # instead of two differently-named vars pointing at the same URL.
   app-config-be:
-    base-url: ${APP_CONFIG_BE_BASE_URL:http://localhost:8083}
-    connect-timeout-ms: ${APP_CONFIG_BE_CONNECT_TIMEOUT_MS:3000}
-    read-timeout-ms: ${APP_CONFIG_BE_READ_TIMEOUT_MS:5000}
+    base-url: ${CLIENTS_APP_CONFIG_BASE_URL:http://localhost:8083}
+    connect-timeout-ms: ${CLIENTS_APP_CONFIG_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${CLIENTS_APP_CONFIG_READ_TIMEOUT_MS:5000}
   user-be:
-    base-url: ${USER_BE_BASE_URL:http://localhost:8082}
-    connect-timeout-ms: ${USER_BE_CONNECT_TIMEOUT_MS:3000}
-    read-timeout-ms: ${USER_BE_READ_TIMEOUT_MS:5000}
+    base-url: ${CLIENTS_USER_BASE_URL:http://localhost:8082}
+    connect-timeout-ms: ${CLIENTS_USER_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${CLIENTS_USER_READ_TIMEOUT_MS:5000}
 
 messaging:
   dead-letter:

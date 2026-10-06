@@ -71,6 +71,19 @@ app:
       # Tokens must include this in their "aud" claim. Populated by the
       # audience-notification-be protocol mapper on the two public clients.
       audience: ${APP_SECURITY_OAUTH2_AUDIENCE:skateboard-notification-be}
+      service-account:
+        # This service's own client-credentials grant, for calling
+        # app-config-be/user-be as itself (Guest Application settings and
+        # recipient email resolution — see ServiceAccountTokenProvider).
+        # Requires skateboard-notification-be to have serviceAccountsEnabled
+        # in the live realm (see railway-variables.txt's manual Keycloak
+        # step for this service). The defaults below point at localhost and
+        # a dev-only secret — both MUST be overridden by real env vars here,
+        # or every service-account call fails (token-uri) or is rejected
+        # (client-secret).
+        token-uri: ${APP_SECURITY_OAUTH2_TOKEN_URI:http://localhost:8180/realms/skateboard-podcast/protocol/openid-connect/token}
+        client-id: ${APP_SECURITY_OAUTH2_SERVICE_ACCOUNT_CLIENT_ID:skateboard-notification-be}
+        client-secret: ${APP_SECURITY_OAUTH2_SERVICE_ACCOUNT_CLIENT_SECRET:dev-notification-be-secret}
   tenancy:
     # Every user shares this tenant today (no real multi-tenancy yet). Used
     # when a token carries no tenant_id claim — the attribute is admin-managed
@@ -113,6 +126,45 @@ push:
     max-age-hours: ${PUSH_RECEIPTS_MAX_AGE_HOURS:24}
     batch-limit: ${PUSH_RECEIPTS_BATCH_LIMIT:100}
     cron: ${PUSH_RECEIPTS_CRON:0 */15 * * * *}
+
+email:
+  brevo:
+    base-url: ${BREVO_BASE_URL:https://api.brevo.com}
+    # No safe default — unset, Brevo rejects every call with an empty API
+    # key. Guest Application confirmation emails silently never send until
+    # this is a real key. Never logged, never returned in a response.
+    api-key: ${BREVO_API_KEY:}
+    sender-name: ${BREVO_SENDER_NAME:Skateboard Podcast}
+    sender-email: ${BREVO_SENDER_EMAIL:no-reply@your-domain.com}
+    connect-timeout-ms: ${BREVO_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${BREVO_READ_TIMEOUT_MS:10000}
+
+  retry:
+    enabled: ${EMAIL_RETRY_ENABLED:true}
+    max-attempts: ${EMAIL_RETRY_MAX_ATTEMPTS:4}
+    backoff-seconds: ${EMAIL_RETRY_BACKOFF_SECONDS:120}
+    batch-limit: ${EMAIL_RETRY_BATCH_LIMIT:100}
+    cron: ${EMAIL_RETRY_CRON:0 */2 * * * *}
+
+clients:
+  # Peer services this instance calls as itself (service-account token above)
+  # for Guest Application notifications — AppConfigGuestApplicationSettingsClient
+  # and UserDirectoryClient. No safe default: unset, these fall back to
+  # http://localhost:8083 / :8082, which is unreachable from this service's
+  # own Railway container and fails every call.
+  #
+  # Env var names match skateboard-ui-backend's own clients.* block
+  # (CLIENTS_APP_CONFIG_*, CLIENTS_USER_*) on purpose — both services call
+  # the same app-config-be/user-be, so the same Railway shared value covers
+  # both instead of two differently-named vars for the same URL.
+  app-config-be:
+    base-url: ${CLIENTS_APP_CONFIG_BASE_URL:http://localhost:8083}
+    connect-timeout-ms: ${CLIENTS_APP_CONFIG_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${CLIENTS_APP_CONFIG_READ_TIMEOUT_MS:5000}
+  user-be:
+    base-url: ${CLIENTS_USER_BASE_URL:http://localhost:8082}
+    connect-timeout-ms: ${CLIENTS_USER_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${CLIENTS_USER_READ_TIMEOUT_MS:5000}
 
 messaging:
   dead-letter:
