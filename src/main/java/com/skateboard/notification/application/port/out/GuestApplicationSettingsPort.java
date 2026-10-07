@@ -6,16 +6,20 @@ import java.util.UUID;
 
 /**
  * Reads skateboard-app-config-be's Guest Application settings at delivery
- * time — recipients and the confirmation email template are deliberately
- * <strong>not</strong> snapshotted on the event (see
- * skateboard-app-config-be's {@code GuestApplicationConfig} javadoc, and
- * skateboard-podcast-be's {@code GuestApplicationSubmissionNotifier}): an
- * admin changing the template or recipient list must take effect on the
- * next delivery, including a retry, not just new submissions.
+ * time — recipients are deliberately <strong>not</strong> snapshotted on the
+ * event (see skateboard-app-config-be's {@code GuestApplicationConfig}
+ * javadoc, and skateboard-podcast-be's {@code GuestApplicationSubmissionNotifier}):
+ * an admin changing the recipient list must take effect on the next
+ * delivery, including a retry, not just new submissions.
+ *
+ * <p>The confirmation/admin-notification email copy used to live here too
+ * (confirmationSubject/confirmationBody); it is now resolved separately via
+ * {@link EmailTemplateResolverPort}, which supports per-language copy
+ * instead of English only.
  */
 public interface GuestApplicationSettingsPort {
 
-    record Settings(boolean enabled, List<UUID> recipientIds, String confirmationSubject, String confirmationBody) {
+    record Settings(boolean enabled, List<UUID> recipientIds) {
     }
 
     /**

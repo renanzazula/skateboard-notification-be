@@ -3,10 +3,12 @@ package com.skateboard.notification.application.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skateboard.notification.application.port.in.HandleGuestApplicationSubmittedUseCase;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.EmailTemplateResolverPort;
 import com.skateboard.notification.application.port.out.GuestApplicationSettingsPort;
 import com.skateboard.notification.application.port.out.RecipientDirectoryPort;
 import com.skateboard.notification.domain.model.DevicePlatform;
 import com.skateboard.notification.domain.model.EmailDelivery;
+import com.skateboard.notification.domain.model.EmailTemplateType;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.NotificationType;
@@ -42,6 +44,7 @@ class HandleGuestApplicationSubmittedServiceTest {
     @Mock private GuestApplicationNotificationRecorder recorder;
     @Mock private DispatchNotificationService dispatchNotificationService;
     @Mock private DispatchEmailService dispatchEmailService;
+    @Mock private EmailTemplateResolverPort emailTemplateResolverPort;
 
     private HandleGuestApplicationSubmittedService service;
 
@@ -50,7 +53,8 @@ class HandleGuestApplicationSubmittedServiceTest {
         MockitoAnnotations.openMocks(this);
         service = new HandleGuestApplicationSubmittedService(settingsPort, recipientDirectoryPort,
                 deviceRepositoryPort, new NotificationTemplateResolver(), recorder,
-                dispatchNotificationService, dispatchEmailService, new ObjectMapper());
+                dispatchNotificationService, dispatchEmailService, emailTemplateResolverPort,
+                new EmailTemplateRenderer(), new ObjectMapper());
         when(recipientDirectoryPort.resolve(any())).thenReturn(List.of());
     }
 
@@ -67,8 +71,8 @@ class HandleGuestApplicationSubmittedServiceTest {
 
     @Test
     void notifiesEveryConfiguredRecipientInAppAndQueuesTheirEmailsWhenResolved() {
-        when(settingsPort.getSettings()).thenReturn(Optional.of(new GuestApplicationSettingsPort.Settings(
-                true, List.of(ADMIN_A, ADMIN_B), "We've received your podcast guest application", "Thanks {name}!")));
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(true, List.of(ADMIN_A, ADMIN_B))));
         when(recipientDirectoryPort.resolve(List.of(ADMIN_A, ADMIN_B))).thenReturn(List.of(
                 new RecipientDirectoryPort.ResolvedRecipient(ADMIN_A, "admin-a@example.com", true, true),
                 // Not emailable: excluded from email, still an in-app recipient.
@@ -96,8 +100,8 @@ class HandleGuestApplicationSubmittedServiceTest {
 
     @Test
     void theAdminNotificationCarriesTheApplicantNameAndReferencesTheApplication() {
-        when(settingsPort.getSettings()).thenReturn(Optional.of(new GuestApplicationSettingsPort.Settings(
-                true, List.of(ADMIN_A), null, null)));
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(true, List.of(ADMIN_A))));
         when(deviceRepositoryPort.findEnabledDevicesOfUser(eq(TENANT), any())).thenReturn(List.of());
         recorderAccepts();
 
@@ -113,8 +117,8 @@ class HandleGuestApplicationSubmittedServiceTest {
 
     @Test
     void skipsTheAdminNotificationWhenNoRecipientsAreConfigured() {
-        when(settingsPort.getSettings()).thenReturn(Optional.of(new GuestApplicationSettingsPort.Settings(
-                true, List.of(), "subject", "body")));
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(true, List.of())));
         recorderAccepts();
 
         HandleGuestApplicationSubmittedUseCase.Result result = service.execute(input());
@@ -126,10 +130,12 @@ class HandleGuestApplicationSubmittedServiceTest {
         assertThat(draftCaptor.getValue()).isNull();
     }
 
-    /** Settings outage must not cost the applicant their confirmation — default copy still goes out. */
+    /** app-config-be unreachable must not cost the applicant their confirmation — default copy still goes out. */
     @Test
-    void fallsBackToDefaultConfirmationCopyWhenSettingsCannotBeRead() {
+    void fallsBackToDefaultConfirmationCopyWhenTheTemplateResolverFails() {
         when(settingsPort.getSettings()).thenReturn(Optional.empty());
+        when(emailTemplateResolverPort.resolve(eq(EmailTemplateType.GUEST_APPLICATION_RECEIVED), eq("en")))
+                .thenReturn(Optional.empty());
         recorderAccepts();
 
         service.execute(input());
@@ -137,13 +143,16 @@ class HandleGuestApplicationSubmittedServiceTest {
         EmailDelivery confirmation = capturedEmails().get(0);
         assertThat(confirmation.getRecipientEmail()).isEqualTo("jane@example.com");
         assertThat(confirmation.getSubject()).isEqualTo("We've received your podcast guest application");
-        assertThat(confirmation.getBody()).contains("Thank you for your interest");
+        assertThat(confirmation.getBody()).contains("Thank you for your interest").contains("Jane Doe");
     }
 
     @Test
-    void substitutesTheNamePlaceholderInTheConfiguredConfirmationBody() {
-        when(settingsPort.getSettings()).thenReturn(Optional.of(new GuestApplicationSettingsPort.Settings(
-                true, List.of(), "Custom subject", "Hi {name}, thanks for applying!")));
+    void rendersTheConfiguredConfirmationTemplateWithMustache() {
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(false, List.of())));
+        when(emailTemplateResolverPort.resolve(eq(EmailTemplateType.GUEST_APPLICATION_RECEIVED), eq("en")))
+                .thenReturn(Optional.of(new EmailTemplateResolverPort.Template(
+                        "Custom subject", "Hi {{name}}, thanks for applying!", true)));
         recorderAccepts();
 
         service.execute(input());
@@ -151,6 +160,47 @@ class HandleGuestApplicationSubmittedServiceTest {
         EmailDelivery confirmation = capturedEmails().get(0);
         assertThat(confirmation.getSubject()).isEqualTo("Custom subject");
         assertThat(confirmation.getBody()).isEqualTo("Hi Jane Doe, thanks for applying!");
+    }
+
+    @Test
+    void rendersTheConfiguredAdminNotificationTemplateWithNameEmailAndMessage() {
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(true, List.of(ADMIN_A))));
+        when(recipientDirectoryPort.resolve(List.of(ADMIN_A))).thenReturn(List.of(
+                new RecipientDirectoryPort.ResolvedRecipient(ADMIN_A, "admin-a@example.com", true, true)));
+        when(deviceRepositoryPort.findEnabledDevicesOfUser(eq(TENANT), any())).thenReturn(List.of());
+        when(emailTemplateResolverPort.resolve(eq(EmailTemplateType.GUEST_APPLICATION_ADMIN_NOTIFICATION), eq("en")))
+                .thenReturn(Optional.of(new EmailTemplateResolverPort.Template(
+                        "New: {{name}}", "{{name}} <{{email}}>: {{message}}", true)));
+        recorderAccepts();
+
+        service.execute(input());
+
+        EmailDelivery adminEmail = capturedEmails().stream()
+                .filter(e -> e.getRecipientEmail().equals("admin-a@example.com"))
+                .findFirst().orElseThrow();
+        assertThat(adminEmail.getSubject()).isEqualTo("New: Jane Doe");
+        assertThat(adminEmail.getBody()).isEqualTo("Jane Doe <jane@example.com>: I love skating");
+    }
+
+    @Test
+    void fallsBackToDefaultAdminNotificationCopyWhenTheTemplateResolverFails() {
+        when(settingsPort.getSettings()).thenReturn(Optional.of(
+                new GuestApplicationSettingsPort.Settings(true, List.of(ADMIN_A))));
+        when(recipientDirectoryPort.resolve(List.of(ADMIN_A))).thenReturn(List.of(
+                new RecipientDirectoryPort.ResolvedRecipient(ADMIN_A, "admin-a@example.com", true, true)));
+        when(deviceRepositoryPort.findEnabledDevicesOfUser(eq(TENANT), any())).thenReturn(List.of());
+        when(emailTemplateResolverPort.resolve(eq(EmailTemplateType.GUEST_APPLICATION_ADMIN_NOTIFICATION), eq("en")))
+                .thenReturn(Optional.empty());
+        recorderAccepts();
+
+        service.execute(input());
+
+        EmailDelivery adminEmail = capturedEmails().stream()
+                .filter(e -> e.getRecipientEmail().equals("admin-a@example.com"))
+                .findFirst().orElseThrow();
+        assertThat(adminEmail.getSubject()).isEqualTo("New podcast guest application from Jane Doe");
+        assertThat(adminEmail.getBody()).contains("I love skating").contains("Review it in the admin panel");
     }
 
     @Test
