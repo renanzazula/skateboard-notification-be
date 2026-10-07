@@ -1,7 +1,8 @@
 package com.skateboard.notification.adapter.out.directory.appconfig;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.skateboard.notification.application.port.out.GuestApplicationSettingsPort;
+import com.skateboard.notification.application.port.out.EmailTemplateResolverPort;
+import com.skateboard.notification.domain.model.EmailTemplateType;
 import com.skateboard.notification.infrastructure.directory.AppConfigClientProperties;
 import com.skateboard.notification.infrastructure.security.ServiceAccountTokenProvider;
 import io.netty.channel.ChannelOption;
@@ -14,29 +15,24 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
- * Calls skateboard-app-config-be's {@code GET /api/guest-application-settings/admin}
- * as this service's own client-credentials identity (spec: recipients and
- * the confirmation template are read live, never snapshotted — see
- * {@link GuestApplicationSettingsPort}).
+ * Calls skateboard-app-config-be's {@code GET /api/email-templates/{type}/{language}}
+ * as this service's own client-credentials identity — same token/properties
+ * as {@link AppConfigGuestApplicationSettingsClient}, just a different path.
  */
 @Component
-public class AppConfigGuestApplicationSettingsClient implements GuestApplicationSettingsPort {
+public class AppConfigEmailTemplateClient implements EmailTemplateResolverPort {
 
-    private static final Logger log = LoggerFactory.getLogger(AppConfigGuestApplicationSettingsClient.class);
-
-    private static final String PATH = "/api/guest-application-settings/admin";
+    private static final Logger log = LoggerFactory.getLogger(AppConfigEmailTemplateClient.class);
 
     private final WebClient webClient;
     private final ServiceAccountTokenProvider tokenProvider;
 
-    public AppConfigGuestApplicationSettingsClient(WebClient.Builder webClientBuilder,
-                                                   AppConfigClientProperties properties,
-                                                   ServiceAccountTokenProvider tokenProvider) {
+    public AppConfigEmailTemplateClient(WebClient.Builder webClientBuilder,
+                                        AppConfigClientProperties properties,
+                                        ServiceAccountTokenProvider tokenProvider) {
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, properties.connectTimeoutMs())
                 .responseTimeout(Duration.ofMillis(properties.readTimeoutMs()));
@@ -49,15 +45,15 @@ public class AppConfigGuestApplicationSettingsClient implements GuestApplication
     }
 
     @Override
-    public Optional<Settings> getSettings() {
+    public Optional<Template> resolve(EmailTemplateType type, String language) {
         String token = tokenProvider.getAccessToken();
         if (token == null) {
-            log.error("No service-account token available; cannot read Guest Application settings");
+            log.error("No service-account token available; cannot read email template {}/{}", type, language);
             return Optional.empty();
         }
         try {
             Response response = webClient.get()
-                    .uri(PATH)
+                    .uri("/api/email-templates/{type}/{language}", type, language)
                     .headers(h -> h.setBearerAuth(token))
                     .retrieve()
                     .bodyToMono(Response.class)
@@ -65,15 +61,14 @@ public class AppConfigGuestApplicationSettingsClient implements GuestApplication
             if (response == null) {
                 return Optional.empty();
             }
-            return Optional.of(new Settings(response.enabled(),
-                    response.recipientIds() == null ? List.of() : response.recipientIds()));
+            return Optional.of(new Template(response.subject(), response.body(), response.enabled()));
         } catch (RuntimeException e) {
-            log.error("Could not read Guest Application settings from app-config-be: {}", e.getMessage(), e);
+            log.error("Could not read email template {}/{} from app-config-be: {}", type, language, e.getMessage(), e);
             return Optional.empty();
         }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record Response(boolean enabled, List<UUID> recipientIds) {
+    private record Response(String subject, String body, boolean enabled) {
     }
 }

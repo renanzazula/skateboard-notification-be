@@ -4,10 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skateboard.notification.application.port.in.HandleGuestApplicationSubmittedUseCase;
 import com.skateboard.notification.application.port.out.DeviceRepositoryPort;
+import com.skateboard.notification.application.port.out.EmailTemplateResolverPort;
 import com.skateboard.notification.application.port.out.GuestApplicationSettingsPort;
 import com.skateboard.notification.application.port.out.RecipientDirectoryPort;
 import com.skateboard.notification.domain.model.EmailDelivery;
 import com.skateboard.notification.domain.model.EmailProvider;
+import com.skateboard.notification.domain.model.EmailTemplateType;
 import com.skateboard.notification.domain.model.Notification;
 import com.skateboard.notification.domain.model.NotificationDevice;
 import com.skateboard.notification.domain.model.NotificationType;
@@ -28,12 +30,15 @@ import java.util.UUID;
  * §6). The policy layer for this event, same role
  * {@link HandlePodcastPublishedService} plays for podcasts.
  *
- * <p>Settings (who the admins are, what the confirmation says) are read live
- * from skateboard-app-config-be on every attempt, including a retry — see
- * {@link GuestApplicationSettingsPort}'s javadoc for why that is deliberate
- * rather than a snapshot. A settings-read failure degrades gracefully: the
- * applicant still gets the default confirmation text, admins just get
- * nothing this pass (there is no sane default recipient list).
+ * <p>Settings (who the admins are) are read live from skateboard-app-config-be
+ * on every attempt, including a retry — see {@link GuestApplicationSettingsPort}'s
+ * javadoc for why that is deliberate rather than a snapshot. Email copy is
+ * resolved separately, also live, via {@link EmailTemplateResolverPort} and
+ * rendered by {@link EmailTemplateRenderer}. A settings-read failure
+ * degrades gracefully: the applicant still gets the default confirmation
+ * text, admins just get nothing this pass (there is no sane default
+ * recipient list). A template-read failure degrades the same way: the
+ * hardcoded fallback copy below goes out instead.
  */
 @Service
 public class HandleGuestApplicationSubmittedService implements HandleGuestApplicationSubmittedUseCase {
@@ -43,14 +48,22 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
     private static final String EVENT_TYPE = "GUEST_APPLICATION_SUBMITTED";
     private static final String REFERENCE_TYPE = "GUEST_APPLICATION";
 
-    // Same copy as skateboard-app-config-be's GuestApplicationConfig
-    // defaults, used here only when the settings read itself fails — an
+    // V1 resolves templates at a fixed language: the GUEST_APPLICATION_SUBMITTED
+    // event carries no applicant-preferred-language field yet. Matches
+    // today's actual behavior (English-only) — not a regression.
+    private static final String LANGUAGE = "en";
+
+    // Same copy as skateboard-app-config-be's EmailTemplateType defaults,
+    // used here only when the template resolver call itself fails — an
     // admin who has actually configured different text always wins because
-    // the settings call succeeded.
+    // the resolver call succeeded.
     private static final String DEFAULT_CONFIRMATION_SUBJECT = "We've received your podcast guest application";
     private static final String DEFAULT_CONFIRMATION_BODY =
-            "Thank you for your interest in joining our podcast! We've received your application "
+            "Thank you for your interest in joining our podcast, {{name}}! We've received your application "
                     + "and will contact you as soon as possible.";
+    private static final String DEFAULT_ADMIN_NOTIFICATION_SUBJECT = "New podcast guest application from {{name}}";
+    private static final String DEFAULT_ADMIN_NOTIFICATION_BODY =
+            "{{name}} ({{email}}) applied to be a podcast guest.\n\n{{message}}\n\nReview it in the admin panel.";
 
     private final GuestApplicationSettingsPort settingsPort;
     private final RecipientDirectoryPort recipientDirectoryPort;
@@ -59,6 +72,8 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
     private final GuestApplicationNotificationRecorder recorder;
     private final DispatchNotificationService dispatchNotificationService;
     private final DispatchEmailService dispatchEmailService;
+    private final EmailTemplateResolverPort emailTemplateResolverPort;
+    private final EmailTemplateRenderer emailTemplateRenderer;
     private final ObjectMapper objectMapper;
 
     public HandleGuestApplicationSubmittedService(GuestApplicationSettingsPort settingsPort,
@@ -68,6 +83,8 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
                                                   GuestApplicationNotificationRecorder recorder,
                                                   DispatchNotificationService dispatchNotificationService,
                                                   DispatchEmailService dispatchEmailService,
+                                                  EmailTemplateResolverPort emailTemplateResolverPort,
+                                                  EmailTemplateRenderer emailTemplateRenderer,
                                                   ObjectMapper objectMapper) {
         this.settingsPort = settingsPort;
         this.recipientDirectoryPort = recipientDirectoryPort;
@@ -76,21 +93,22 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
         this.recorder = recorder;
         this.dispatchNotificationService = dispatchNotificationService;
         this.dispatchEmailService = dispatchEmailService;
+        this.emailTemplateResolverPort = emailTemplateResolverPort;
+        this.emailTemplateRenderer = emailTemplateRenderer;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public Result execute(Input input) {
         GuestApplicationSettingsPort.Settings settings = settingsPort.getSettings()
-                .orElseGet(() -> new GuestApplicationSettingsPort.Settings(
-                        false, List.of(), DEFAULT_CONFIRMATION_SUBJECT, DEFAULT_CONFIRMATION_BODY));
+                .orElseGet(() -> new GuestApplicationSettingsPort.Settings(false, List.of()));
 
         List<UUID> recipientIds = settings.recipientIds();
         List<RecipientDirectoryPort.ResolvedRecipient> resolvedRecipients = recipientDirectoryPort.resolve(recipientIds);
 
         Notification adminDraft = recipientIds.isEmpty() ? null : buildAdminNotification(input);
         List<NotificationDevice> adminDevices = recipientIds.isEmpty() ? List.of() : devicesFor(input, recipientIds);
-        List<EmailDelivery> emails = buildEmailDeliveries(input, settings, resolvedRecipients);
+        List<EmailDelivery> emails = buildEmailDeliveries(input, resolvedRecipients);
 
         Optional<GuestApplicationNotificationRecorder.Recorded> recorded = recorder.recordSubmission(
                 input.eventId(), EVENT_TYPE, adminDraft, adminDevices, recipientIds, emails);
@@ -127,35 +145,42 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
     }
 
     /** Applicant confirmation (when they left a usable email) plus one per admin whose address resolved as safe to use. */
-    private List<EmailDelivery> buildEmailDeliveries(Input input, GuestApplicationSettingsPort.Settings settings,
+    private List<EmailDelivery> buildEmailDeliveries(Input input,
                                                       List<RecipientDirectoryPort.ResolvedRecipient> resolvedRecipients) {
         List<EmailDelivery> emails = new ArrayList<>();
 
         if (input.email() != null && !input.email().isBlank()) {
-            String subject = blankToDefault(settings.confirmationSubject(), DEFAULT_CONFIRMATION_SUBJECT);
-            String bodyTemplate = blankToDefault(settings.confirmationBody(), DEFAULT_CONFIRMATION_BODY);
+            EmailTemplateResolverPort.Template template = emailTemplateResolverPort
+                    .resolve(EmailTemplateType.GUEST_APPLICATION_RECEIVED, LANGUAGE)
+                    .orElse(new EmailTemplateResolverPort.Template(
+                            DEFAULT_CONFIRMATION_SUBJECT, DEFAULT_CONFIRMATION_BODY, true));
+            Map<String, Object> variables = Map.of("name", nullSafe(input.name()));
             emails.add(EmailDelivery.pending(REFERENCE_TYPE, input.applicationId(), input.email(),
-                    subject, renderPlaceholder(bodyTemplate, input.name()), EmailProvider.BREVO));
+                    emailTemplateRenderer.render(template.subject(), variables),
+                    emailTemplateRenderer.render(template.body(), variables), EmailProvider.BREVO));
         }
 
-        for (RecipientDirectoryPort.ResolvedRecipient recipient : resolvedRecipients) {
-            if (!recipient.isEmailable()) {
-                continue;
+        List<RecipientDirectoryPort.ResolvedRecipient> emailableAdmins = resolvedRecipients.stream()
+                .filter(RecipientDirectoryPort.ResolvedRecipient::isEmailable)
+                .toList();
+        if (!emailableAdmins.isEmpty()) {
+            EmailTemplateResolverPort.Template adminTemplate = emailTemplateResolverPort
+                    .resolve(EmailTemplateType.GUEST_APPLICATION_ADMIN_NOTIFICATION, LANGUAGE)
+                    .orElse(new EmailTemplateResolverPort.Template(
+                            DEFAULT_ADMIN_NOTIFICATION_SUBJECT, DEFAULT_ADMIN_NOTIFICATION_BODY, true));
+            Map<String, Object> adminVariables = Map.of(
+                    "name", nullSafe(input.name()),
+                    "email", nullSafe(input.email()),
+                    "message", nullSafe(input.message()));
+            String adminSubject = emailTemplateRenderer.render(adminTemplate.subject(), adminVariables);
+            String adminBody = emailTemplateRenderer.render(adminTemplate.body(), adminVariables);
+            for (RecipientDirectoryPort.ResolvedRecipient recipient : emailableAdmins) {
+                emails.add(EmailDelivery.pending(REFERENCE_TYPE, input.applicationId(), recipient.email(),
+                        adminSubject, adminBody, EmailProvider.BREVO));
             }
-            emails.add(EmailDelivery.pending(REFERENCE_TYPE, input.applicationId(), recipient.email(),
-                    adminEmailSubject(input), adminEmailBody(input), EmailProvider.BREVO));
         }
 
         return emails;
-    }
-
-    private String adminEmailSubject(Input input) {
-        return "New podcast guest application from " + nullSafe(input.name());
-    }
-
-    private String adminEmailBody(Input input) {
-        return nullSafe(input.name()) + " (" + nullSafe(input.email()) + ") applied to be a podcast guest.\n\n"
-                + nullSafe(input.message()) + "\n\nReview it in the admin panel.";
     }
 
     /**
@@ -173,15 +198,6 @@ public class HandleGuestApplicationSubmittedService implements HandleGuestApplic
             log.error("Could not serialize notification data for applicationId={}", input.applicationId(), e);
             return "{}";
         }
-    }
-
-    /** Only {name} is supported — matches skateboard-app-config-be's GuestApplicationConfig, which rejects anything else at save time. */
-    private String renderPlaceholder(String template, String name) {
-        return template.replace("{name}", nullSafe(name));
-    }
-
-    private String blankToDefault(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     private String nullSafe(String value) {

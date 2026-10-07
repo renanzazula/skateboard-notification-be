@@ -73,6 +73,15 @@
             <artifactId>reactor-netty-http</artifactId>
         </dependency>
 
+        <!-- Renders EmailTemplate subject/body fetched from app-config-be —
+             {{variable}} syntax, replacing the old manual
+             String.replace("{name}", ...). No Spring integration needed, so
+             the plain compiler artifact is enough. -->
+        <dependency>
+            <groupId>com.github.spullara.mustache.java</groupId>
+            <artifactId>compiler</artifactId>
+            <version>0.9.14</version>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
